@@ -12,19 +12,22 @@ import pickle
 from selenium.common.exceptions import NoSuchElementException
 from datetime import datetime
 import sys
+import toml
 
 def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
 
 class pricesdrop_bot(threading.Thread):
-    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,asin,cut_price,autocheckout,object_state=None):
+    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,product):
         self.amazon_host=amazon_host
         self.amazon_tag=amazon_tag
         self.amazon_email=amazon_email
         self.amazon_psw=amazon_psw
-        self.asin=asin
-        self.cut_price=cut_price
-        self.autocheckout=autocheckout
+        self.product_name=product["name"]
+        self.asin=product["asin"]
+        self.cut_price=product["cut_price"]
+        self.autocheckout=product.get("autocheckout", False)
+        object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
         self.previous_main_price = 0.0
         self.previous_offer_prices = []
@@ -123,7 +126,7 @@ class pricesdrop_bot(threading.Thread):
                         log(f"{log_message} - ACCEPTED: Price is low enough.")
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
-                        self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price:.2f}!")
+                        self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
                         
                         sleep(0.5)
                         driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -143,7 +146,7 @@ class pricesdrop_bot(threading.Thread):
                     logs_dir = "logs"
                     if not os.path.exists(logs_dir):
                         os.makedirs(logs_dir)
-                    html_file_name = os.path.join(logs_dir, f"debug_main_offer_not_found_{self.asin}.html")
+                    html_file_name = os.path.join(logs_dir, f"debug_main_offer_not_found_{self.product_name.replace(' ', '_')}_{self.asin}.html")
                     with open(html_file_name, "w", encoding="utf-8") as f:
                         f.write(f"<!-- {error_message} -->\n")
                         f.write(driver.page_source)
@@ -222,7 +225,7 @@ class pricesdrop_bot(threading.Thread):
                             log(f"{log_message} - ACCEPTED: Price is low enough.")
                             add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                             add_to_cart_button.click()
-                            self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price:.2f}!")
+                            self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
                             
                             sleep(0.5)
                             driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -244,7 +247,7 @@ class pricesdrop_bot(threading.Thread):
                         logs_dir = "logs"
                         if not os.path.exists(logs_dir):
                             os.makedirs(logs_dir)
-                        html_file_name = os.path.join(logs_dir, f"debug_other_offer_not_found_{self.asin}.html")
+                        html_file_name = os.path.join(logs_dir, f"debug_other_offer_not_found_{self.product_name.replace(' ', '_')}_{self.asin}.html")
                         with open(html_file_name, "w", encoding="utf-8") as f:
                             f.write(f"<!-- {error_message} -->\n")
                             f.write(driver.page_source)
@@ -275,20 +278,52 @@ amazon_tag=os.getenv("AMAZON_TAG") or None
 amazon_email=os.getenv("AMAZON_EMAIL")
 amazon_psw=os.getenv("AMAZON_PASSWORD")
 
-products = [
-  # Example: Look for a new item under 50.00
-  #{ "asin": "B0DTKCCFMK", "cut_price": 50.00, "autocheckout": False, "object_state": ["new"] },
-  # Example: Look for a used item (like new or very good) under 800.00
-  #{ "asin": "B0CZXNNJW8", "cut_price": 800.00, "autocheckout": False, "object_state": ["used-like new", "used-very good"] },
-  # Example: Look for any state under 25.00 (if object_state is not provided)
-  # { "asin": "B08P3V52P3", "cut_price": 25.00, "autocheckout": False },
-]
+# Load products from TOML file
+products_file = 'products.toml'
+sample_file = 'products.sample.toml'
+
+try:
+    with open(products_file, 'r', encoding='utf-8') as f:
+        products_toml = toml.load(f)
+except FileNotFoundError:
+    log(f"'{products_file}' not found.")
+    try:
+        with open(sample_file, 'r', encoding='utf-8') as s, open(products_file, 'w', encoding='utf-8') as p:
+            p.write(s.read())
+        log(f"Created '{products_file}' from '{sample_file}'. Please customize it with your products and run the script again.")
+    except FileNotFoundError:
+        log(f"'{sample_file}' not found either. Creating a new '{products_file}' from scratch.")
+        example_toml = '''
+# Use the section header (e.g., [My Awesome Product]) as a friendly name for logging.
+[Playstation 5 Slim]
+asin = "B0DTKCCFMK"
+cut_price = 50.00
+autocheckout = false
+# object_state is optional. If omitted, all states are considered.
+# Valid states are: "new", "used-like new", "used-very good", "used-good", "used-acceptable"
+object_state = ["new"]
+'''
+        with open(products_file, 'w', encoding='utf-8') as f:
+            f.write(example_toml)
+        log(f"An example '{products_file}' has been created. Please edit it with your products.")
+    sys.exit()
+
+products = []
+for name, details in products_toml.items():
+    details['name'] = name
+    products.append(details)
 
 threads_list=[]
 
 for item in products:
-    log(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
-    t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"], object_state=item["object_state"])
+    log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
+    t=pricesdrop_bot(
+        amazon_host=amazon_host, 
+        amazon_tag=amazon_tag, 
+        amazon_email=amazon_email, 
+        amazon_psw=amazon_psw, 
+        product=item
+    )
     t.start() 
     threads_list.append(t) 
   
