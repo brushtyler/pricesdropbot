@@ -17,7 +17,7 @@ def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
 
 class pricesdrop_bot(threading.Thread):
-    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,asin,cut_price,autocheckout):
+    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,asin,cut_price,autocheckout,object_state=None):
         self.amazon_host=amazon_host
         self.amazon_tag=amazon_tag
         self.amazon_email=amazon_email
@@ -25,6 +25,7 @@ class pricesdrop_bot(threading.Thread):
         self.asin=asin
         self.cut_price=cut_price
         self.autocheckout=autocheckout
+        self.object_state = [state.lower() for state in object_state] if object_state else []
         self.previous_main_price = 0.0
         self.previous_offer_prices = []
         self.previous_offer_count = -1
@@ -101,9 +102,25 @@ class pricesdrop_bot(threading.Thread):
                     if price_changed:
                         self.previous_main_price = main_current_price
 
-                    if main_current_price <= self.cut_price:
+                    condition_text = "Nuovo" # Assume "Nuovo" (New) if not specified, common for main offer
+                    try:
+                        condition_span = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'offer-display-feature-text-message')]")
+                        condition_text = condition_span.text.strip()
+                    except NoSuchElementException:
+                        pass # Keep default "Nuovo"
+
+                    normalized_state = "new" if "nuovo" in condition_text.lower() else "used"
+                    
+                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
+
+                    if self.object_state and normalized_state not in self.object_state:
+                        if price_changed:
+                            log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
+                    elif main_current_price <= self.cut_price:
                         if price_changed:
                             log(f"Price drop detected for main offer at: {main_current_price:.2f}")
+                        
+                        log(f"{log_message} - ACCEPTED: Price is low enough.")
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
                         self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price:.2f}!")
@@ -117,7 +134,7 @@ class pricesdrop_bot(threading.Thread):
                         check = False
                     else:
                         if price_changed:
-                            log(f"The current price for main offer is not low enough: {main_current_price:.2f}")
+                            log(f"{log_message} - SKIPPING: The current price is not low enough: {main_current_price:.2f}")
                 except NoSuchElementException as e:
                     exc_type, exc_value, exc_tb = sys.exc_info()
                     file_name = exc_tb.tb_frame.f_code.co_filename
@@ -154,6 +171,31 @@ class pricesdrop_bot(threading.Thread):
                 new_offer_prices = []
                 for i, offer in enumerate(offer_containers):
                     try:
+                        price_changed = False # Default to false
+                        
+                        condition_text = "N/A"
+                        try:
+                            condition_heading = offer.find_element(by=By.XPATH, value=".//div[contains(@id, 'aod-offer-heading')]//h5")
+                            condition_text = condition_heading.text.strip()
+                        except NoSuchElementException:
+                            log("Could not find condition for an offer, skipping.")
+                            continue
+                        
+                        normalized_state = "unknown"
+                        condition_lower = condition_text.lower()
+                        if "nuovo" in condition_lower:
+                            normalized_state = "new"
+                        elif "usato - come nuovo" in condition_lower:
+                            normalized_state = "used-like new"
+                        elif "usato - ottime condizioni" in condition_lower:
+                            normalized_state = "used-very good"
+                        elif "usato - buone condizioni" in condition_lower:
+                            normalized_state = "used-good"
+                        elif "usato - condizioni accettabili" in condition_lower:
+                            normalized_state = "used-acceptable"
+                        elif "usato" in condition_lower:
+                            normalized_state = "used"
+
                         price_whole_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
                         try:
                             price_fraction_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
@@ -163,13 +205,21 @@ class pricesdrop_bot(threading.Thread):
                         
                         new_offer_prices.append(current_price)
 
-                        price_changed = False
                         if i >= len(self.previous_offer_prices) or self.previous_offer_prices[i] != current_price:
                             price_changed = True
+
+                        log_message = f"Found offer: State='{condition_text}' (normalized='{normalized_state}'), Price={current_price:.2f}"
+
+                        if self.object_state and normalized_state not in self.object_state:
+                            if price_changed:
+                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
+                            continue
 
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"Price drop detected at: {current_price:.2f}")
+                            
+                            log(f"{log_message} - ACCEPTED: Price is low enough.")
                             add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                             add_to_cart_button.click()
                             self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price:.2f}!")
@@ -184,7 +234,7 @@ class pricesdrop_bot(threading.Thread):
                             break
                         else:
                             if price_changed:
-                                log(f"The current price is not low enough: {current_price:.2f}")
+                                log(f"{log_message} - SKIPPING: Price is not low enough.")
                     except Exception as e:
                         exc_type, exc_value, exc_tb = sys.exc_info()
                         file_name = exc_tb.tb_frame.f_code.co_filename
@@ -226,15 +276,19 @@ amazon_email=os.getenv("AMAZON_EMAIL")
 amazon_psw=os.getenv("AMAZON_PASSWORD")
 
 products = [
-  { "asin": "B0DTKCCFMK", "cut_price": 50.00, "autocheckout": False },
-  { "asin": "B0CZXNNJW8", "cut_price": 800.00, "autocheckout": False },
+  # Example: Look for a new item under 50.00
+  #{ "asin": "B0DTKCCFMK", "cut_price": 50.00, "autocheckout": False, "object_state": ["new"] },
+  # Example: Look for a used item (like new or very good) under 800.00
+  #{ "asin": "B0CZXNNJW8", "cut_price": 800.00, "autocheckout": False, "object_state": ["used-like new", "used-very good"] },
+  # Example: Look for any state under 25.00 (if object_state is not provided)
+  # { "asin": "B08P3V52P3", "cut_price": 25.00, "autocheckout": False },
 ]
 
 threads_list=[]
 
 for item in products:
     log(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
-    t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"])
+    t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"], object_state=item["object_state"])
     t.start() 
     threads_list.append(t) 
   
