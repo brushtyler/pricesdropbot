@@ -626,7 +626,7 @@ def stop_monitoring_product(asin):
     del active_threads[asin]
     log(f"Stopped monitoring for product {asin}.")
 
-def amazon_monitor_main():
+def amazon_monitor_main(monitoring_started_event):
     if os.path.exists(".cookies.pkl"):
         log("Cookies file found. Checking session validity...")
         check_options = selenium.webdriver.ChromeOptions()
@@ -691,11 +691,21 @@ def amazon_monitor_main():
         log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
         start_monitoring_product(item)
 
+    # Signal that monitoring has started
+    monitoring_started_event.set()
+    log("Amazon monitoring initial setup complete. Telegram bot can now start.")
+
 
 if __name__ == '__main__':
+    monitoring_started_event = threading.Event()
+
     # Start Amazon monitoring in a separate thread
-    amazon_thread = threading.Thread(target=amazon_monitor_main)
+    amazon_thread = threading.Thread(target=amazon_monitor_main, args=(monitoring_started_event,))
     amazon_thread.start()
+
+    # Wait for Amazon monitoring to complete its initial setup
+    monitoring_started_event.wait()
+    log("Telegram bot starting...")
 
     # Run Telegram bot in the main thread
     telegram_bot_main()
