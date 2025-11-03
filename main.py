@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+import platform
+import subprocess
+
 import selenium
 from selenium.webdriver.common.by import By
 from time import sleep
@@ -18,6 +21,20 @@ class pricesdrop_bot(threading.Thread):
         self.cut_price=cut_price
         self.autocheckout=autocheckout
         threading.Thread.__init__(self) 
+
+    def send_notification(self, title, message):
+        if platform.system() == "Linux":
+            try:
+                # Check if notify-send is available
+                subprocess.run(["notify-send", "--version"], check=True, capture_output=True)
+                subprocess.run(["notify-send", title, message])
+            except FileNotFoundError:
+                print(f"Notification: {title} - {message} (notify-send not found, falling back to print)")
+            except Exception as e:
+                print(f"Error sending notification: {e}, falling back to print")
+                print(f"Notification: {title} - {message}")
+        else:
+            print(f"Notification: {title} - {message}")
 
     def run(self):
         options = selenium.webdriver.ChromeOptions() 
@@ -69,6 +86,7 @@ class pricesdrop_bot(threading.Thread):
                         print(f"Price drop detected for main offer at: {main_current_price}")
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
+                        self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price}!")
                         
                         sleep(0.5)
                         driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -110,6 +128,7 @@ class pricesdrop_bot(threading.Thread):
                             print(f"Price drop detected at: {current_price}")
                             add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                             add_to_cart_button.click()
+                            self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price}!")
                             
                             sleep(0.5)
                             driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
