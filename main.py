@@ -122,6 +122,56 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"Product with ASIN {asin_to_delete} not found in the monitoring list.")
 
+async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Reloading products from products.toml...")
+    
+    new_products_list = load_products_from_toml()
+    if new_products_list is None:
+        await update.message.reply_text("Could not load products.toml. Please check the logs.")
+        return
+
+    new_products_map = {p['asin']: p for p in new_products_list}
+    new_asins = set(new_products_map.keys())
+    current_asins = set(active_threads.keys())
+
+    asins_to_remove = current_asins - new_asins
+    asins_to_add = new_asins - current_asins
+    asins_to_check = current_asins.intersection(new_asins)
+
+    removed_count = 0
+    for asin in asins_to_remove:
+        stop_monitoring_product(asin)
+        removed_count += 1
+    if removed_count > 0:
+        log(f"Stopped monitoring {removed_count} product(s) removed from the file.")
+        await update.message.reply_text(f"Stopped monitoring {removed_count} product(s) removed from the file.")
+
+    added_count = 0
+    for asin in asins_to_add:
+        start_monitoring_product(new_products_map[asin])
+        added_count += 1
+    if added_count > 0:
+        log(f"Started monitoring {added_count} new product(s).")
+        await update.message.reply_text(f"Started monitoring {added_count} new product(s).")
+
+    updated_count = 0
+    for asin in asins_to_check:
+        old_product_data = active_threads[asin].get('product_data')
+        new_product_data = new_products_map[asin]
+
+        if old_product_data != new_product_data:
+            log(f"Product {asin} data has changed. Reloading.")
+            stop_monitoring_product(asin)
+            start_monitoring_product(new_product_data)
+            updated_count += 1
+
+    if updated_count > 0:
+        log(f"Reloaded {updated_count} product(s) with updated configuration.")
+        await update.message.reply_text(f"Reloaded {updated_count} product(s) with updated configuration.")
+
+    await update.message.reply_text("Reload complete.")
+
+
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not active_threads:
         await update.message.reply_text("No products are currently being monitored.")
@@ -154,6 +204,7 @@ def telegram_bot_main():
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("list", list_command))
+    application.add_handler(CommandHandler("reload", reload_command))
 
     log("Telegram bot started polling...")
     application.run_polling()
@@ -517,27 +568,33 @@ amazon_tag=os.getenv("AMAZON_TAG") or None
 amazon_email=os.getenv("AMAZON_EMAIL")
 amazon_psw=os.getenv("AMAZON_PASSWORD")
 
-# Load products from TOML file
-products_file = 'products.toml'
-sample_file = 'products.sample.toml'
+def load_products_from_toml():
+    products_file = 'products.toml'
+    sample_file = 'products.sample.toml'
 
-try:
-    with open(products_file, 'r', encoding='utf-8') as f:
-        products_toml = toml.load(f)
-except FileNotFoundError:
-    log(f"'{products_file}' not found.")
     try:
-        with open(sample_file, 'r', encoding='utf-8') as s, open(products_file, 'w', encoding='utf-8') as p:
-            p.write(s.read())
-        log(f"Created '{products_file}' from '{sample_file}'. Please customize it with your products and run the script again.")
+        with open(products_file, 'r', encoding='utf-8') as f:
+            products_toml = toml.load(f)
     except FileNotFoundError:
-        log(f"'{sample_file}' not found! Cannot create {products_file}... Bail out!")
-    sys.exit()
+        log(f"'{products_file}' not found.")
+        try:
+            with open(sample_file, 'r', encoding='utf-8') as s, open(products_file, 'w', encoding='utf-8') as p:
+                p.write(s.read())
+            log(f"Created '{products_file}' from '{sample_file}'. Please customize it with your products and run the script again.")
+        except FileNotFoundError:
+            log(f"'{sample_file}' not found! Cannot create {products_file}... Bail out!")
+        return None
 
-products = []
-for name, details in products_toml.items():
-    details['name'] = name
-    products.append(details)
+    products = []
+    for name, details in products_toml.items():
+        details['name'] = name
+        products.append(details)
+    return products
+
+# Load products from TOML file
+products = load_products_from_toml()
+if products is None:
+    sys.exit()
 
 active_threads = {}
 
@@ -555,7 +612,7 @@ def start_monitoring_product(product_data):
         stop_event=stop_event
     )
     t.start()
-    active_threads[asin] = {'thread': t, 'stop_event': stop_event}
+    active_threads[asin] = {'thread': t, 'stop_event': stop_event, 'product_data': product_data}
     log(f"Started monitoring product '{product_data['name']}' ({asin}).")
 
 def stop_monitoring_product(asin):
@@ -626,26 +683,9 @@ def amazon_monitor_main():
 
     # Load products from TOML file
     log("Loading product list...")
-    products_file = 'products.toml'
-    sample_file = 'products.sample.toml'
-
-    try:
-        with open(products_file, 'r', encoding='utf-8') as f:
-            products_toml = toml.load(f)
-    except FileNotFoundError:
-        log(f"'{products_file}' not found.")
-        try:
-            with open(sample_file, 'r', encoding='utf-8') as s, open(products_file, 'w', encoding='utf-8') as p:
-                p.write(s.read())
-            log(f"Created '{products_file}' from '{sample_file}'. Please customize it with your products and run the script again.")
-        except FileNotFoundError:
-            log(f"'{sample_file}' not found! Cannot create {products_file}... Bail out!")
+    products = load_products_from_toml()
+    if products is None:
         sys.exit()
-
-    products = []
-    for name, details in products_toml.items():
-        details['name'] = name
-        products.append(details)
 
     for item in products:
         log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
