@@ -239,7 +239,11 @@ class pricesdrop_bot(threading.Thread):
 
     def run(self):
         options = selenium.webdriver.ChromeOptions() 
-        options.headless = False
+        options.add_argument("--headless=new") # Use the new headless mode
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080") # Set a default window size
+        options.add_argument("--disable-gpu") # Often recommended for headless
 
         # Configure the undetected_chromedriver options
         driver = selenium.webdriver.Chrome(options=options) 
