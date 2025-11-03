@@ -300,6 +300,7 @@ class pricesdrop_bot(threading.Thread):
                 # Check the main "Brand New" option (Featured Offer)
                 try:
                     MAIN_OFFER_CONTAINER_XPATHS = [
+                        "//div[@id='qualifiedBuybox']",
                         "//div[@id='newAccordionRow_0']",
                         "//div[contains(@class, 'aod-pinned-offer')]",
                         "//div[@id='aod-sticky-pinned-offer']",
