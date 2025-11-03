@@ -301,13 +301,12 @@ class pricesdrop_bot(threading.Thread):
 
                 # Check for product unavailability
                 main_current_price = None # Default to an invalid price
-                price_changed = False
+                condition_text = "N/A" # Initialize with default value
+                normalized_state = "unknown" # Initialize with default value
                 try:
                     unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
                     if unavailable_element:
                         main_current_price = -1.0  # Product is unavailable
-                        price_changed = True # Ensure this state is logged
-                        log(f"Product is currently unavailable.", self.product_name)
                 except NoSuchElementException:
                     # Product is not explicitly marked as unavailable, proceed to check for main offer
                     pass
@@ -330,10 +329,6 @@ class pricesdrop_bot(threading.Thread):
                         except NoSuchElementException:
                             main_current_price = float(price_whole_str)
 
-                        price_changed = main_current_price != self.previous_main_price
-                        if price_changed:
-                            self.previous_main_price = main_current_price
-
                         condition_text = "New" # Default to New
                         # Try to find any text within the main offer container that indicates "used"
                         try:
@@ -348,41 +343,6 @@ class pricesdrop_bot(threading.Thread):
                         condition_cleaned = condition_text.lower()
                         if "usato" in condition_cleaned or "used" in condition_cleaned:
                             normalized_state = "used"
-                        
-                        if main_current_price == -1.0:
-                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: UNAVAILABLE"
-                        elif main_current_price is None:
-                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: ERROR_GETTING_PRICE"
-                        else:
-                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
-
-                        if main_current_price == -1.0:
-                            if price_changed:
-                                log(f"{log_message}", self.product_name)
-                        elif main_current_price is None:
-                            if price_changed:
-                                log(f"{log_message} - ERROR: unable to get main offer's current price...", self.product_name)
-                        elif self.object_state and normalized_state not in self.object_state:
-                            if price_changed:
-                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", self.product_name)
-                        elif main_current_price <= self.cut_price:
-                            if price_changed:
-                                log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
-                            if not self.autocheckout:
-                                main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
-                                main_add_to_cart_button.click()
-                                log(f"!!! Just added to cart !!!", self.product_name)
-                            else:
-                                #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                                sleep(0.5)
-                                #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
-                                #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                                log(f"!!! Just bought !!!", self.product_name)
-                            
-                        else:
-                            if price_changed:
-                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", self.product_name)
                     except NoSuchElementException as e:
                         self._save_debug_html(driver, e, "main_offer")
                     except Exception as e:
@@ -391,6 +351,46 @@ class pricesdrop_bot(threading.Thread):
                         line_number = exc_tb.tb_lineno
                         log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
                 
+                price_changed = main_current_price != self.previous_main_price
+
+                if main_current_price == -1.0:
+                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: UNAVAILABLE"
+                elif main_current_price is None:
+                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: ERROR_GETTING_PRICE"
+                else:
+                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
+
+                if main_current_price == -1.0:
+                    if price_changed:
+                        log(f"{log_message}", self.product_name)
+                elif main_current_price is None:
+                    if price_changed:
+                        log(f"{log_message} - ERROR: unable to get main offer's current price...", self.product_name)
+                elif self.object_state and normalized_state not in self.object_state:
+                    if price_changed:
+                        log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", self.product_name)
+                elif main_current_price <= self.cut_price:
+                    if price_changed:
+                        log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
+                    if not self.autocheckout:
+                        main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                        main_add_to_cart_button.click()
+                        log(f"!!! Just added to cart !!!", self.product_name)
+                    else:
+                        #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
+                        sleep(0.5)
+                        #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
+                        #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
+                        log(f"!!! Just bought !!!", self.product_name)
+                    
+                else:
+                    if price_changed:
+                        log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", self.product_name)
+                
+                # Update previous_main_price after all processing for the current iteration
+                self.previous_main_price = main_current_price
+
                 if self.stop_event.is_set(): # If main offer was processed and bought, exit
                     break
 
