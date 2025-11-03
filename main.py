@@ -57,28 +57,12 @@ class pricesdrop_bot(threading.Thread):
         self.previous_main_offer_xpath = None
         threading.Thread.__init__(self) 
 
-    def send_notification(self, title, message):
-        if platform.system() == "Linux":
-            try:
-                # Check if notify-send is available
-                subprocess.run(["notify-send", "--version"], check=True, capture_output=True)
-                subprocess.run(["notify-send", title, message])
-            except FileNotFoundError:
-                log(f"Notification: {title} - {message} (notify-send not found, falling back to print)")
-            except Exception as e:
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                file_name = exc_tb.tb_frame.f_code.co_filename
-                line_number = exc_tb.tb_lineno
-                log(f"Error sending notification: {e} at file {file_name} line {line_number}, falling back to print")
-                log(f"Notification: {title} - {message}")
-        else:
-            log(f"Notification: {title} - {message}")
-
     def _save_debug_html(self, driver, exception, context_name):
         exc_type, exc_value, exc_tb = sys.exc_info()
         file_name = exc_tb.tb_frame.f_code.co_filename
         line_number = exc_tb.tb_lineno
-        error_message = f"File: {file_name}, Line: {line_number}, Error: {exception}"
+        current_url = driver.current_url
+        error_message = f"URL: {current_url}, File: {file_name}, Line: {line_number}, Error: {exception}"
         
         logs_dir = "logs"
         if not os.path.exists(logs_dir):
@@ -217,7 +201,6 @@ class pricesdrop_bot(threading.Thread):
                             main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                             main_add_to_cart_button.click()
                             log(f"[{self.product_name}] !!! Just added to cart !!!")
-                            self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
                             send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
                         else:
                             #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -225,7 +208,6 @@ class pricesdrop_bot(threading.Thread):
                             #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
                             #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
                             log(f"[{self.product_name}] !!! Just bought !!!")
-                            self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                             send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                         
                         check = False
@@ -314,7 +296,6 @@ class pricesdrop_bot(threading.Thread):
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                                 add_to_cart_button.click()
                                 log(f"[{self.product_name}] !!! Just added to cart !!!")
-                                self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
                                 send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
                             else:
                                 #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -322,7 +303,6 @@ class pricesdrop_bot(threading.Thread):
                                 #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
                                 #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
                                 log(f"[{self.product_name}] !!! Just bought !!!")
-                                self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                                 send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                             
                             check = False
