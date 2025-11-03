@@ -158,16 +158,25 @@ def telegram_bot_main():
     log("Telegram bot started polling...")
     application.run_polling()
 
-def send_telegram_notification(message, product_name=None):
+def send_telegram_notification(message, product_name=None, image_url=None):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if bot_token and chat_id:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": "HTML"
-        }
+        if image_url:
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            payload = {
+                "chat_id": chat_id,
+                "photo": image_url,
+                "caption": message,
+                "parse_mode": "HTML"
+            }
+        else:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
         try:
             response = requests.post(url, json=payload)
             if response.status_code == 200:
@@ -283,6 +292,25 @@ class pricesdrop_bot(threading.Thread):
                 except NoSuchElementException:
                     pass # No CAPTCHA detected, continue as usual
 
+                # Try to find the product image URL
+                self.product_image_url = None
+                try:
+                    image_xpaths = [
+                        "//img[@id='landingImage']",
+                        "//img[@id='imgBlkFront']",
+                        "//div[contains(@class, 'imgTagWrapper')]/img"
+                    ]
+                    for xpath in image_xpaths:
+                        try:
+                            image_element = driver.find_element(by=By.XPATH, value=xpath)
+                            self.product_image_url = image_element.get_attribute('src')
+                            if self.product_image_url:
+                                break
+                        except NoSuchElementException:
+                            continue
+                except Exception as e:
+                    log(f"Could not find product image: {e}", self.product_name)
+
                 # Check for product unavailability
                 main_current_price = None # Default to an invalid price
                 condition_text = "N/A" # Initialize with default value
@@ -356,7 +384,7 @@ class pricesdrop_bot(threading.Thread):
                 elif main_current_price <= self.cut_price:
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {self.product_url}", self.product_name)
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {self.product_url}", self.product_name, image_url=self.product_image_url)
                     if not self.autocheckout:
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
@@ -448,7 +476,7 @@ class pricesdrop_bot(threading.Thread):
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"{log_message} - ACCEPTED: Price is low enough.")
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {self.product_url}", self.product_name)
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {self.product_url}", self.product_name, image_url=self.product_image_url)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
