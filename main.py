@@ -13,6 +13,7 @@ from selenium.common.exceptions import NoSuchElementException
 from datetime import datetime
 import sys
 import toml
+import random
 
 def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
@@ -31,7 +32,7 @@ class pricesdrop_bot(threading.Thread):
         self.object_state = [state.lower() for state in object_state] if object_state else []
         self.previous_main_price = 0.0
         self.previous_offer_prices = []
-        self.previous_offer_count = -1
+        self.previous_main_offer_xpath = None
         threading.Thread.__init__(self) 
 
     def send_notification(self, title, message):
@@ -70,6 +71,25 @@ class pricesdrop_bot(threading.Thread):
             
         log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}")
 
+    def _find_element_by_multiple_xpaths(self, driver, xpaths, description="element", xpath_tracker_attribute_name=None):
+        for xpath in xpaths:
+            try:
+                element = driver.find_element(by=By.XPATH, value=xpath)
+                
+                if xpath_tracker_attribute_name:
+                    previous_xpath = getattr(self, xpath_tracker_attribute_name, None)
+                    if xpath != previous_xpath:
+                        log(f"[{self.product_name}] Found {description} using new XPath: {xpath} (previously: {previous_xpath})")
+                        setattr(self, xpath_tracker_attribute_name, xpath)
+                    # else: no change, no log
+                else:
+                    log(f"[{self.product_name}] Found {description} using XPath: {xpath}") # Log always if no tracker
+                
+                return element
+            except NoSuchElementException:
+                continue
+        raise NoSuchElementException(f"Could not find {description} using any of the provided XPaths: {xpaths}")
+
     def run(self):
         options = selenium.webdriver.ChromeOptions() 
         options.headless = False
@@ -107,12 +127,35 @@ class pricesdrop_bot(threading.Thread):
         while check:
             sleep(5)
             try:
-                driver.get(f"https://{self.amazon_host}/dp/{self.asin}/?aod=1{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
+                driver.get(f"https://{self.amazon_host}/dp/{self.asin}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
                 sleep(10)
+
+                # Check for CAPTCHA page
+                try:
+                    captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] ")
+                    if captcha_text_element:
+                        log(f"[{self.product_name}] CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.")
+                        # Add random delay before clicking
+                        random_delay = random.uniform(0, 3)
+                        log(f"[{self.product_name}] Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.")
+                        sleep(random_delay)
+                        # Find and click the "Continua con gli acquisti" button
+                        continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] ")
+                        continue_button.click()
+                        log(f"[{self.product_name}] 'Continue shopping' button clicked. Waiting for 3 seconds.")
+                        sleep(3) # Wait for the page to load after clicking the button
+                except NoSuchElementException:
+                    pass # No CAPTCHA detected, continue as usual
 
                 # Check the main "Brand New" option (Featured Offer)
                 try:
-                    main_offer_container = driver.find_element(by=By.XPATH, value="//div[@id='newAccordionRow_0']")
+                    MAIN_OFFER_CONTAINER_XPATHS = [
+                        "//div[@id='newAccordionRow_0']",
+                        "//div[contains(@class, 'aod-pinned-offer')]",
+                        "//div[@id='aod-sticky-pinned-offer']",
+                        "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]"
+                    ]
+                    main_offer_container = self._find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container", "previous_main_offer_xpath")
                     price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
                     try:
                         price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
@@ -178,9 +221,8 @@ class pricesdrop_bot(threading.Thread):
 
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
                 current_offer_count = len(offer_containers)
-                if current_offer_count != self.previous_offer_count:
+                if current_offer_count != len(self.previous_offer_prices):
                     log(f"[{self.product_name}] {current_offer_count} other offers found")
-                    self.previous_offer_count = current_offer_count
 
                 if not offer_containers:
                     driver.refresh()
