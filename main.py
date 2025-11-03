@@ -21,8 +21,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def log(message):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
+def log(message, product_name=None):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}]{f' [{product_name}]' if product_name else ''} {message}")
 
 # States for adding a product
 ASK_ASIN, ASK_NAME, ASK_CUT_PRICE, ASK_AUTOCHECKOUT = range(4)
@@ -158,7 +158,7 @@ def telegram_bot_main():
     log("Telegram bot started polling...")
     application.run_polling()
 
-def send_telegram_notification(message):
+def send_telegram_notification(message, product_name=None):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if bot_token and chat_id:
@@ -171,13 +171,13 @@ def send_telegram_notification(message):
         try:
             response = requests.post(url, json=payload)
             if response.status_code == 200:
-                log("Telegram notification sent successfully.")
+                log("Telegram notification sent successfully.", product_name)
             else:
-                log(f"Failed to send Telegram notification. Status code: {response.status_code}, Response: {response.text}")
+                log(f"Failed to send Telegram notification. Status code: {response.status_code}, Response: {response.text}", product_name)
         except Exception as e:
-            log(f"An error occurred while sending Telegram notification: {e}")
+            log(f"An error occurred while sending Telegram notification: {e}", product_name)
     else:
-        log("Telegram bot token or chat ID not configured. Skipping notification.")
+        log("Telegram bot token or chat ID not configured. Skipping notification.", product_name)
 
 
 class pricesdrop_bot(threading.Thread):
@@ -216,7 +216,7 @@ class pricesdrop_bot(threading.Thread):
             f.write(f"<!-- {error_message} -->\n")
             f.write(driver.page_source)
             
-        log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}")
+        log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}", self.product_name)
 
     def _find_element_by_multiple_xpaths(self, driver, xpaths, description="element", xpath_tracker_attribute_name=None):
         for xpath in xpaths:
@@ -226,11 +226,11 @@ class pricesdrop_bot(threading.Thread):
                 if xpath_tracker_attribute_name:
                     previous_xpath = getattr(self, xpath_tracker_attribute_name, None)
                     if xpath != previous_xpath:
-                        log(f"[{self.product_name}] Found {description} using new XPath: {xpath} (previously: {previous_xpath})")
+                        log(f"Found {description} using new XPath: {xpath} (previously: {previous_xpath})", self.product_name)
                         setattr(self, xpath_tracker_attribute_name, xpath)
                     # else: no change, no log
                 else:
-                    log(f"[{self.product_name}] Found {description} using XPath: {xpath}") # Log always if no tracker
+                    log(f"Found {description} using XPath: {xpath}", self.product_name) # Log always if no tracker
                 
                 return element
             except NoSuchElementException:
@@ -270,12 +270,14 @@ class pricesdrop_bot(threading.Thread):
             with open(".cookies.pkl", "wb") as f:
                 pickle.dump(driver.get_cookies(), f)
 
+        product_url = f"https://{self.amazon_host}/dp/{self.asin}"
+
         while not self.stop_event.is_set():
             sleep(5 + random.uniform(0, 3))
             if self.stop_event.is_set():
                 break
             try:
-                driver.get(f"https://{self.amazon_host}/dp/{self.asin}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
+                driver.get(f"{product_url}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
                 sleep(10 + random.uniform(0, 3))
                 if self.stop_event.is_set():
                     break
@@ -284,15 +286,15 @@ class pricesdrop_bot(threading.Thread):
                 try:
                     captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] ")
                     if captcha_text_element:
-                        log(f"[{self.product_name}] CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.")
+                        log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", self.product_name)
                         # Add random delay before clicking
                         random_delay = random.uniform(0, 3)
-                        log(f"[{self.product_name}] Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.")
+                        log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", self.product_name)
                         sleep(random_delay)
                         # Find and click the "Continua con gli acquisti" button
                         continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] ")
                         continue_button.click()
-                        log(f"[{self.product_name}] 'Continue shopping' button clicked. Waiting for 3 seconds.")
+                        log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", self.product_name)
                         sleep(3 + random.uniform(0, 3)) # Wait for the page to load after clicking the button
                 except NoSuchElementException:
                     pass # No CAPTCHA detected, continue as usual
@@ -340,18 +342,17 @@ class pricesdrop_bot(threading.Thread):
                     elif main_current_price <= self.cut_price:
                         if price_changed:
                             log(f"{log_message} - ACCEPTED: Price is low enough.")
-                        product_url = f"https://{self.amazon_host}/dp/{self.asin}"
-                        send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}")
+                        send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
                         if not self.autocheckout:
                             main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                             main_add_to_cart_button.click()
-                            log(f"[{self.product_name}] !!! Just added to cart !!!")
+                            log(f"!!! Just added to cart !!!", self.product_name)
                         else:
                             #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                             sleep(0.5)
                             #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
                             #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                            log(f"[{self.product_name}] !!! Just bought !!!")
+                            log(f"!!! Just bought !!!", self.product_name)
                         
                     else:
                         if price_changed:
@@ -370,7 +371,7 @@ class pricesdrop_bot(threading.Thread):
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
                 current_offer_count = len(offer_containers)
                 if current_offer_count != len(self.previous_offer_prices):
-                    log(f"[{self.product_name}] {current_offer_count} other offers found")
+                    log(f"{current_offer_count} other offers found", self.product_name)
 
                 if not offer_containers:
                     driver.refresh()
@@ -387,7 +388,7 @@ class pricesdrop_bot(threading.Thread):
                             condition_span = offer.find_element(by=By.XPATH, value=".//div[@id='aod-offer-heading']/span")
                             condition_text = condition_span.text.strip()
                         except NoSuchElementException:
-                            log(f"[{self.product_name}] Could not find condition for an offer, skipping.")
+                            log(f"Could not find condition for an offer, skipping.", self.product_name)
                             continue
 
                         normalized_state = "unknown"
@@ -417,7 +418,7 @@ class pricesdrop_bot(threading.Thread):
                         if i >= len(self.previous_offer_prices) or self.previous_offer_prices[i] != current_price:
                             price_changed = True
 
-                        log_message = f"[{self.product_name}] Found offer: State='{condition_text}' (normalized='{normalized_state}'), Price={current_price:.2f}"
+                        log_message = f"Found offer: State='{condition_text}' (normalized='{normalized_state}'), Price={current_price:.2f}"
 
                         if current_price < 0:
                             if price_changed:
@@ -432,17 +433,16 @@ class pricesdrop_bot(threading.Thread):
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"{log_message} - ACCEPTED: Price is low enough.")
-                            product_url = f"https://{self.amazon_host}/dp/{self.asin}"
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {product_url}")
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {product_url}", self.product_name)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                                 add_to_cart_button.click()
-                                log(f"[{self.product_name}] !!! Just added to cart !!!")
+                                log(f"!!! Just added to cart !!!", self.product_name)
                             else:
                                 sleep(0.5)
                                 #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                                log(f"[{self.product_name}] !!! Just bought !!!")
+                                log(f"!!! Just bought !!!", self.product_name)
                             
                             check = False
                             break
@@ -528,9 +528,6 @@ def stop_monitoring_product(asin):
     log(f"Stopping monitoring for product {asin}...")
     active_threads[asin]['stop_event'].set()
     active_threads[asin]['thread'].join()
-    del active_threads[asin]
-    log(f"Stopped monitoring for product {asin}.")
-
     del active_threads[asin]
     log(f"Stopped monitoring for product {asin}.")
 
