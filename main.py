@@ -87,14 +87,18 @@ class pricesdrop_bot(threading.Thread):
                 # Check the main "Brand New" option (Featured Offer)
                 try:
                     main_offer_container = driver.find_element(by=By.XPATH, value="//div[@id='newAccordionRow_0']")
-                    main_price_element = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]")
-                    main_current_price = int(main_price_element.text.replace(".", "").replace(",", ""))
+                    price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+                    try:
+                        price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                        main_current_price = float(f"{price_whole_str}.{price_fraction_str}")
+                    except NoSuchElementException:
+                        main_current_price = float(price_whole_str)
 
                     if main_current_price <= self.cut_price:
-                        log(f"Price drop detected for main offer at: {main_current_price}")
+                        log(f"Price drop detected for main offer at: {main_current_price:.2f}")
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
-                        self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price}!")
+                        self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price:.2f}!")
                         
                         sleep(0.5)
                         driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -104,7 +108,7 @@ class pricesdrop_bot(threading.Thread):
                         
                         check = False
                     else:
-                        log(f"The current price for main offer is not low enough: {main_current_price}")
+                        log(f"The current price for main offer is not low enough: {main_current_price:.2f}")
                 except NoSuchElementException as e:
                     exc_type, exc_value, exc_tb = sys.exc_info()
                     file_name = exc_tb.tb_frame.f_code.co_filename
@@ -137,14 +141,18 @@ class pricesdrop_bot(threading.Thread):
 
                 for offer in offer_containers:
                     try:
-                        price_element = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]")
-                        current_price = int(price_element.text.replace(".", "").replace(",", ""))
+                        price_whole_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+                        try:
+                            price_fraction_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                            current_price = float(f"{price_whole_str}.{price_fraction_str}")
+                        except NoSuchElementException:
+                            current_price = float(price_whole_str)
 
                         if current_price <= self.cut_price:
-                            log(f"Price drop detected at: {current_price}")
+                            log(f"Price drop detected at: {current_price:.2f}")
                             add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                             add_to_cart_button.click()
-                            self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price}!")
+                            self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price:.2f}!")
                             
                             sleep(0.5)
                             driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -155,7 +163,7 @@ class pricesdrop_bot(threading.Thread):
                             check = False
                             break
                         else:
-                            log(f"The current price is not low enough: {current_price}")
+                            log(f"The current price is not low enough: {current_price:.2f}")
                     except Exception as e:
                         exc_type, exc_value, exc_tb = sys.exc_info()
                         file_name = exc_tb.tb_frame.f_code.co_filename
@@ -192,17 +200,16 @@ amazon_email=os.getenv("AMAZON_EMAIL")
 amazon_psw=os.getenv("AMAZON_PASSWORD")
 
 products = [
-  { "asin": "B0DTKCCFMK", "cut_price": 50, "autocheckout": False },
+  { "asin": "B0DTKCCFMK", "cut_price": 50.00, "autocheckout": False },
 ]
 
 threads_list=[]
 
 for item in products:
-    log(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']}...")
+    log(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
     t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"])
     t.start() 
     threads_list.append(t) 
   
 for t in threads_list: 
     t.join()
-       
