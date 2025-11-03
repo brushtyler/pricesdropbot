@@ -284,7 +284,7 @@ class pricesdrop_bot(threading.Thread):
 
                 # Check for CAPTCHA page
                 try:
-                    captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] ")
+                    captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] | //h4[contains(text(), 'Click the button below to continue shopping')] ")
                     if captcha_text_element:
                         log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", self.product_name)
                         # Add random delay before clicking
@@ -292,79 +292,105 @@ class pricesdrop_bot(threading.Thread):
                         log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", self.product_name)
                         sleep(random_delay)
                         # Find and click the "Continua con gli acquisti" button
-                        continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] ")
+                        continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] | //button[contains(text(), 'Continue with your order')] ")
                         continue_button.click()
                         log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", self.product_name)
                         sleep(3 + random.uniform(0, 3)) # Wait for the page to load after clicking the button
                 except NoSuchElementException:
                     pass # No CAPTCHA detected, continue as usual
 
-                # Check the main "Brand New" option (Featured Offer)
+                # Check for product unavailability
+                main_current_price = None # Default to an invalid price
+                price_changed = False
                 try:
-                    MAIN_OFFER_CONTAINER_XPATHS = [
-                        "//div[@id='qualifiedBuybox']",
-                        "//div[@id='newAccordionRow_0']",
-                        "//div[contains(@class, 'aod-pinned-offer')]",
-                        "//div[@id='aod-sticky-pinned-offer']",
-                        "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]"
-                    ]
-                    main_offer_container = self._find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container", "previous_main_offer_xpath")
-                    price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+                    unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
+                    if unavailable_element:
+                        main_current_price = -1.0  # Product is unavailable
+                        price_changed = True # Ensure this state is logged
+                        log(f"Product is currently unavailable.", self.product_name)
+                except NoSuchElementException:
+                    # Product is not explicitly marked as unavailable, proceed to check for main offer
+                    pass
+
+                # Check the main "Brand New" option (Featured Offer) only if not already determined as unavailable
+                if main_current_price != -1.0:
                     try:
-                        price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
-                        main_current_price = float(f"{price_whole_str}.{price_fraction_str}")
-                    except NoSuchElementException:
-                        main_current_price = float(price_whole_str)
+                        MAIN_OFFER_CONTAINER_XPATHS = [
+                            "//div[@id='qualifiedBuybox']",
+                            "//div[@id='newAccordionRow_0']",
+                            "//div[contains(@class, 'aod-pinned-offer')]",
+                            "//div[@id='aod-sticky-pinned-offer']",
+                            "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]"
+                        ]
+                        main_offer_container = self._find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container", "previous_main_offer_xpath")
+                        price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+                        try:
+                            price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                            main_current_price = float(f"{price_whole_str}.{price_fraction_str}")
+                        except NoSuchElementException:
+                            main_current_price = float(price_whole_str)
 
-                    price_changed = main_current_price != self.previous_main_price
-                    if price_changed:
-                        self.previous_main_price = main_current_price
-
-                    condition_text = "Nuovo" # Default to New
-                    # Try to find any text within the main offer container that indicates "used"
-                    try:
-                        # Search for "Usato" (Used) within the main offer container
-                        used_element = main_offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
-                        if used_element:
-                            condition_text = used_element.text.strip() # Get the actual text if found
-                    except NoSuchElementException:
-                        pass # No explicit "used" text found, keep default "Nuovo"
-
-                    normalized_state = "used" if "usato" in condition_text.lower() else "new"
-                    
-                    log_message = f"[{self.product_name}] Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
-
-                    if main_current_price < 0:
-                        log(f"{log_message} - ERROR: unable to get main offer's current price...")
-                    elif self.object_state and normalized_state not in self.object_state:
+                        price_changed = main_current_price != self.previous_main_price
                         if price_changed:
-                            log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
-                    elif main_current_price <= self.cut_price:
-                        if price_changed:
-                            log(f"{log_message} - ACCEPTED: Price is low enough.")
-                        send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
-                        if not self.autocheckout:
-                            main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
-                            main_add_to_cart_button.click()
-                            log(f"!!! Just added to cart !!!", self.product_name)
-                        else:
-                            #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                            sleep(0.5)
-                            #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
-                            #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                            log(f"!!! Just bought !!!", self.product_name)
+                            self.previous_main_price = main_current_price
+
+                        condition_text = "New" # Default to New
+                        # Try to find any text within the main offer container that indicates "used"
+                        try:
+                            # Search for "Usato" (Used) or "Used" within the main offer container
+                            used_element = main_offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
+                            if used_element:
+                                condition_text = used_element.text.strip() # Get the actual text if found
+                        except NoSuchElementException:
+                            pass # No explicit "used" text found, keep default "New"
+
+                        normalized_state = "new"
+                        condition_cleaned = condition_text.lower()
+                        if "usato" in condition_cleaned or "used" in condition_cleaned:
+                            normalized_state = "used"
                         
-                    else:
-                        if price_changed:
-                            log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
-                except NoSuchElementException as e:
-                    self._save_debug_html(driver, e, "main_offer")
-                except Exception as e:
-                    exc_type, exc_value, exc_tb = sys.exc_info()
-                    file_name = exc_tb.tb_frame.f_code.co_filename
-                    line_number = exc_tb.tb_lineno
-                    log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
+                        if main_current_price == -1.0:
+                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: UNAVAILABLE"
+                        elif main_current_price is None:
+                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: ERROR_GETTING_PRICE"
+                        else:
+                            log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
 
+                        if main_current_price == -1.0:
+                            if price_changed:
+                                log(f"{log_message}", self.product_name)
+                        elif main_current_price is None:
+                            if price_changed:
+                                log(f"{log_message} - ERROR: unable to get main offer's current price...", self.product_name)
+                        elif self.object_state and normalized_state not in self.object_state:
+                            if price_changed:
+                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", self.product_name)
+                        elif main_current_price <= self.cut_price:
+                            if price_changed:
+                                log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
+                            if not self.autocheckout:
+                                main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                                main_add_to_cart_button.click()
+                                log(f"!!! Just added to cart !!!", self.product_name)
+                            else:
+                                #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
+                                sleep(0.5)
+                                #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
+                                #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
+                                log(f"!!! Just bought !!!", self.product_name)
+                            
+                        else:
+                            if price_changed:
+                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", self.product_name)
+                    except NoSuchElementException as e:
+                        self._save_debug_html(driver, e, "main_offer")
+                    except Exception as e:
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        file_name = exc_tb.tb_frame.f_code.co_filename
+                        line_number = exc_tb.tb_lineno
+                        log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
+                
                 if self.stop_event.is_set(): # If main offer was processed and bought, exit
                     break
 
@@ -393,18 +419,23 @@ class pricesdrop_bot(threading.Thread):
 
                         normalized_state = "unknown"
                         condition_cleaned = " ".join(condition_text.split()).lower()
-                        if "nuovo" in condition_cleaned:
-                            normalized_state = "new"
-                        elif "usato - come nuovo" in condition_cleaned:
-                            normalized_state = "used-likenew"
-                        elif "usato - ottime condizioni" in condition_cleaned:
-                            normalized_state = "used-very good"
-                        elif "usato - buone condizioni" in condition_cleaned:
-                            normalized_state = "used-good"
-                        elif "usato - condizioni accettabili" in condition_cleaned:
-                            normalized_state = "used-acceptable"
-                        elif "usato" in condition_cleaned:
-                            normalized_state = "used"
+                        
+                        condition_mappings = {
+                            "new": ["nuovo", "new"],
+                            "used-likenew": ["usato - come nuovo", "used - like new"],
+                            "used-very good": ["usato - ottime condizioni", "used - very good"],
+                            "used-good": ["usato - buone condizioni", "used - good"],
+                            "used-acceptable": ["usato - condizioni accettabili", "used - acceptable"],
+                            "used": ["usato", "used"]
+                        }
+
+                        for state, keywords in condition_mappings.items():
+                            for keyword in keywords:
+                                if keyword in condition_cleaned:
+                                    normalized_state = state
+                                    break
+                            if normalized_state != "unknown":
+                                break
 
                         price_whole_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
                         try:
