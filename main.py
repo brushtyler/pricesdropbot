@@ -138,7 +138,9 @@ class pricesdrop_bot(threading.Thread):
                     
                     log_message = f"[{self.product_name}] Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
 
-                    if self.object_state and normalized_state not in self.object_state:
+                    if main_current_price < 0:
+                        log(f"{log_message} - ERROR: unable to get main offer's current price...")
+                    elif self.object_state and normalized_state not in self.object_state:
                         if price_changed:
                             log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
                     elif main_current_price <= self.cut_price:
@@ -162,7 +164,7 @@ class pricesdrop_bot(threading.Thread):
                         check = False
                     else:
                         if price_changed:
-                            log(f"{log_message} - SKIPPING: The current price is not low enough: {main_current_price:.2f}")
+                            log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
                 except NoSuchElementException as e:
                     self._save_debug_html(driver, e, "main_offer")
                 except Exception as e:
@@ -197,7 +199,7 @@ class pricesdrop_bot(threading.Thread):
                         except NoSuchElementException:
                             log(f"[{self.product_name}] Could not find condition for an offer, skipping.")
                             continue
-                        
+
                         normalized_state = "unknown"
                         condition_cleaned = " ".join(condition_text.split()).lower()
                         if "nuovo" in condition_cleaned:
@@ -227,6 +229,11 @@ class pricesdrop_bot(threading.Thread):
 
                         log_message = f"[{self.product_name}] Found offer: State='{condition_text}' (normalized='{normalized_state}'), Price={current_price:.2f}"
 
+                        if current_price < 0:
+                            if price_changed:
+                                log(f"{log_message} - ERROR: unable to get {i}th offer's current price...")
+                            continue
+                            
                         if self.object_state and normalized_state not in self.object_state:
                             if price_changed:
                                 log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
@@ -254,7 +261,7 @@ class pricesdrop_bot(threading.Thread):
                             break
                         else:
                             if price_changed:
-                                log(f"{log_message} - SKIPPING: Price is not low enough.")
+                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
                     except Exception as e:
                         self._save_debug_html(driver, e, "other_offer")
 
