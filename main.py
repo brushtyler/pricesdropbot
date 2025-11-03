@@ -14,9 +14,31 @@ from datetime import datetime
 import sys
 import toml
 import random
+import requests
 
 def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
+
+def send_telegram_notification(message):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if bot_token and chat_id:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        try:
+            response = requests.post(url, json=payload)
+            if response.status_code == 200:
+                log("Telegram notification sent successfully.")
+            else:
+                log(f"Failed to send Telegram notification. Status code: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            log(f"An error occurred while sending Telegram notification: {e}")
+    else:
+        log("Telegram bot token or chat ID not configured. Skipping notification.")
 
 class pricesdrop_bot(threading.Thread):
     def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,product):
@@ -196,6 +218,7 @@ class pricesdrop_bot(threading.Thread):
                             main_add_to_cart_button.click()
                             log(f"[{self.product_name}] !!! Just added to cart !!!")
                             self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
+                            send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
                         else:
                             #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                             sleep(0.5)
@@ -203,6 +226,7 @@ class pricesdrop_bot(threading.Thread):
                             #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
                             log(f"[{self.product_name}] !!! Just bought !!!")
                             self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
+                            send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                         
                         check = False
                     else:
@@ -291,6 +315,7 @@ class pricesdrop_bot(threading.Thread):
                                 add_to_cart_button.click()
                                 log(f"[{self.product_name}] !!! Just added to cart !!!")
                                 self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
+                                send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
                             else:
                                 #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                                 sleep(0.5)
@@ -298,6 +323,7 @@ class pricesdrop_bot(threading.Thread):
                                 #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
                                 log(f"[{self.product_name}] !!! Just bought !!!")
                                 self.send_notification("Amazon Autobuy Bot", f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
+                                send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                             
                             check = False
                             break
