@@ -10,6 +10,11 @@ import threading
 import os
 import pickle
 from selenium.common.exceptions import NoSuchElementException
+from datetime import datetime
+import sys
+
+def log(message):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
 
 class pricesdrop_bot(threading.Thread):
     def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,asin,cut_price,autocheckout):
@@ -29,12 +34,15 @@ class pricesdrop_bot(threading.Thread):
                 subprocess.run(["notify-send", "--version"], check=True, capture_output=True)
                 subprocess.run(["notify-send", title, message])
             except FileNotFoundError:
-                print(f"Notification: {title} - {message} (notify-send not found, falling back to print)")
+                log(f"Notification: {title} - {message} (notify-send not found, falling back to print)")
             except Exception as e:
-                print(f"Error sending notification: {e}, falling back to print")
-                print(f"Notification: {title} - {message}")
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                file_name = exc_tb.tb_frame.f_code.co_filename
+                line_number = exc_tb.tb_lineno
+                log(f"Error sending notification: {e} at file {file_name} line {line_number}, falling back to print")
+                log(f"Notification: {title} - {message}")
         else:
-            print(f"Notification: {title} - {message}")
+            log(f"Notification: {title} - {message}")
 
     def run(self):
         options = selenium.webdriver.ChromeOptions() 
@@ -83,7 +91,7 @@ class pricesdrop_bot(threading.Thread):
                     main_current_price = int(main_price_element.text.replace(".", "").replace(",", ""))
 
                     if main_current_price <= self.cut_price:
-                        print(f"Price drop detected for main offer at: {main_current_price}")
+                        log(f"Price drop detected for main offer at: {main_current_price}")
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
                         self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {main_current_price}!")
@@ -96,23 +104,31 @@ class pricesdrop_bot(threading.Thread):
                         
                         check = False
                     else:
-                        print(f"The current price for main offer is not low enough: {main_current_price}")
-                except NoSuchElementException:
+                        log(f"The current price for main offer is not low enough: {main_current_price}")
+                except NoSuchElementException as e:
+                    exc_type, exc_value, exc_tb = sys.exc_info()
+                    file_name = exc_tb.tb_frame.f_code.co_filename
+                    line_number = exc_tb.tb_lineno
+                    error_message = f"File: {file_name}, Line: {line_number}, Error: {e}"
                     logs_dir = "logs"
                     if not os.path.exists(logs_dir):
                         os.makedirs(logs_dir)
                     html_file_name = os.path.join(logs_dir, f"debug_main_offer_not_found_{self.asin}.html")
                     with open(html_file_name, "w", encoding="utf-8") as f:
+                        f.write(f"<!-- {error_message} -->\n")
                         f.write(driver.page_source)
-                    print(f"Main offer (newAccordionRow_0) not found. Page HTML saved to {html_file_name} for debugging.")
+                    log(f"Main offer (newAccordionRow_0) not found. Page HTML saved to {html_file_name} for debugging. {error_message}")
                 except Exception as e:
-                    print(f"An unexpected error occurred while processing the main offer: {e}")
+                    exc_type, exc_value, exc_tb = sys.exc_info()
+                    file_name = exc_tb.tb_frame.f_code.co_filename
+                    line_number = exc_tb.tb_lineno
+                    log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
 
                 if not check: # If main offer was processed and bought, exit
                     continue
 
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
-                print(f"{len(offer_containers)} other offers found")
+                log(f"{len(offer_containers)} other offers found")
 
                 if not offer_containers:
                     driver.refresh()
@@ -125,7 +141,7 @@ class pricesdrop_bot(threading.Thread):
                         current_price = int(price_element.text.replace(".", "").replace(",", ""))
 
                         if current_price <= self.cut_price:
-                            print(f"Price drop detected at: {current_price}")
+                            log(f"Price drop detected at: {current_price}")
                             add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                             add_to_cart_button.click()
                             self.send_notification("Amazon Autobuy Bot", f"Item {self.asin} added to cart at {current_price}!")
@@ -139,19 +155,27 @@ class pricesdrop_bot(threading.Thread):
                             check = False
                             break
                         else:
-                            print(f"The current price is not low enough: {current_price}")
+                            log(f"The current price is not low enough: {current_price}")
                     except Exception as e:
-                        print(f"Error processing an offer: {e}")
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        file_name = exc_tb.tb_frame.f_code.co_filename
+                        line_number = exc_tb.tb_lineno
+                        error_message = f"File: {file_name}, Line: {line_number}, Error: {e}"
+                        
                         logs_dir = "logs"
                         if not os.path.exists(logs_dir):
                             os.makedirs(logs_dir)
                         html_file_name = os.path.join(logs_dir, f"debug_other_offer_not_found_{self.asin}.html")
                         with open(html_file_name, "w", encoding="utf-8") as f:
+                            f.write(f"<!-- {error_message} -->\n")
                             f.write(driver.page_source)
-                        print(f"Error processing an offer. Page HTML saved to {html_file_name} for debugging.")
+                        log(f"Error processing an offer. Page HTML saved to {html_file_name} for debugging. {error_message}")
                 
             except Exception as e:
-                print(f"Error finding offers: {e}")
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                file_name = exc_tb.tb_frame.f_code.co_filename
+                line_number = exc_tb.tb_lineno
+                log(f"Error finding offers: {e} at file {file_name} line {line_number}")
                 driver.refresh()
                 sleep(2)
             
@@ -174,7 +198,7 @@ products = [
 threads_list=[]
 
 for item in products:
-    print(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']}...")
+    log(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']}...")
     t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"])
     t.start() 
     threads_list.append(t) 
