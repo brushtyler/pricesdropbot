@@ -125,10 +125,10 @@ class pricesdrop_bot(threading.Thread):
 
         check = True
         while check:
-            sleep(5)
+            sleep(5 + random.uniform(0, 3))
             try:
                 driver.get(f"https://{self.amazon_host}/dp/{self.asin}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
-                sleep(10)
+                sleep(10 + random.uniform(0, 3))
 
                 # Check for CAPTCHA page
                 try:
@@ -143,7 +143,7 @@ class pricesdrop_bot(threading.Thread):
                         continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] ")
                         continue_button.click()
                         log(f"[{self.product_name}] 'Continue shopping' button clicked. Waiting for 3 seconds.")
-                        sleep(3) # Wait for the page to load after clicking the button
+                        sleep(3 + random.uniform(0, 3)) # Wait for the page to load after clicking the button
                 except NoSuchElementException:
                     pass # No CAPTCHA detected, continue as usual
 
@@ -226,7 +226,7 @@ class pricesdrop_bot(threading.Thread):
 
                 if not offer_containers:
                     driver.refresh()
-                    sleep(2)
+                    sleep(2 + random.uniform(0, 3))
                     continue
 
                 new_offer_prices = []
@@ -318,7 +318,7 @@ class pricesdrop_bot(threading.Thread):
                 line_number = exc_tb.tb_lineno
                 log(f"Error finding offers: {e} at file {file_name} line {line_number}")
                 driver.refresh()
-                sleep(2)
+                sleep(2 + random.uniform(0, 3))
             
 
         driver.quit()
