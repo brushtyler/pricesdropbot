@@ -542,19 +542,42 @@ def stop_monitoring_product(asin):
     log(f"Stopped monitoring for product {asin}.")
 
 def amazon_monitor_main():
-    # Common Chrome options
-    common_options = selenium.webdriver.ChromeOptions()
-    common_options.add_argument("--no-sandbox")
-    common_options.add_argument("--disable-dev-shm-usage")
-    common_options.add_argument("--window-size=1920,1080")
-    common_options.add_argument("--disable-gpu")
+    if os.path.exists(".cookies.pkl"):
+        log("Cookies file found. Checking session validity...")
+        check_options = selenium.webdriver.ChromeOptions()
+        check_options.add_argument("--no-sandbox")
+        check_options.add_argument("--disable-dev-shm-usage")
+        check_options.add_argument("--window-size=1920,1080")
+        check_options.add_argument("--disable-gpu")
+        check_options.add_argument("--headless=new")
+        check_driver = selenium.webdriver.Chrome(options=check_options)
+        check_driver.get(f"https://{amazon_host}/")
+        with open(".cookies.pkl", "rb") as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                if 'domain' in cookie:
+                    del cookie['domain']
+                check_driver.add_cookie(cookie)
+        
+        check_driver.get(f"https://{amazon_host}/gp/css/homepage.html")
+        sleep(2) # Give time for redirection
+        
+        if "signin" in check_driver.current_url:
+            log("Session from cookies is invalid. Deleting cookies and performing new login.")
+            os.remove(".cookies.pkl")
+        else:
+            log("Session is valid.")
+        check_driver.quit()
 
     if not os.path.exists(".cookies.pkl"):
         log("No cookies found. Performing login in non-headless mode...")
-        login_options = common_options
+        login_options = selenium.webdriver.ChromeOptions()
+        login_options.add_argument("--no-sandbox")
+        login_options.add_argument("--disable-dev-shm-usage")
+        login_options.add_argument("--window-size=1920,1080")
+        login_options.add_argument("--disable-gpu")
         login_driver = selenium.webdriver.Chrome(options=login_options)
-        # Perform login steps (extracted from autobuy_bot.run)
-        log("Performing login...")
+
         login_driver.get(f"https://{amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2F0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
         sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="ap_email"]').send_keys(amazon_email)
@@ -574,6 +597,7 @@ def amazon_monitor_main():
         log("Login completed and cookies saved.")
 
     # Load products from TOML file
+    log("Loading product list...")
     products_file = 'products.toml'
     sample_file = 'products.sample.toml'
 
