@@ -181,11 +181,9 @@ def send_telegram_notification(message, product_name=None):
 
 
 class pricesdrop_bot(threading.Thread):
-    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,product, stop_event):
+    def __init__(self, amazon_host, amazon_tag, product, stop_event):
         self.amazon_host=amazon_host
         self.amazon_tag=amazon_tag
-        self.amazon_email=amazon_email
-        self.amazon_psw=amazon_psw
         self.product_name=product["name"]
         self.asin=product["asin"]
         self.cut_price=product["cut_price"]
@@ -196,6 +194,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
+        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}"
         threading.Thread.__init__(self) 
 
     def _save_debug_html(self, driver, exception, context_name):
@@ -238,50 +237,31 @@ class pricesdrop_bot(threading.Thread):
         raise NoSuchElementException(f"Could not find {description} using any of the provided XPaths: {xpaths}")
 
     def run(self):
-        options = selenium.webdriver.ChromeOptions() 
-        options.add_argument("--headless=new") # Use the new headless mode
+        options = selenium.webdriver.ChromeOptions()
+        options.add_argument("--headless=new") # Always headless for monitoring
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080") # Set a default window size
-        options.add_argument("--disable-gpu") # Often recommended for headless
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
 
-        # Configure the undetected_chromedriver options
         driver = selenium.webdriver.Chrome(options=options) 
 
-        if os.path.exists(".cookies.pkl"):
-            driver.get(f"https://{self.amazon_host}/")
-            with open(".cookies.pkl", "rb") as f:
-                cookies = pickle.load(f)
-                for cookie in cookies:
-                    if 'domain' in cookie:
-                        del cookie['domain']
-                    driver.add_cookie(cookie)
-            driver.refresh()
-        else:
-            driver.get(f"https://{self.amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{self.amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
-            sleep(1)
-            driver.find_element(by=By.XPATH, value='//*[@id="ap_email"]').send_keys(self.amazon_email)
-            sleep(1)
-            driver.find_element(by=By.XPATH, value='//*[@id="continue"]').click()
-            sleep(1)
-            driver.find_element(by=By.XPATH, value='//*[@id="ap_password"]').send_keys(self.amazon_psw)
-            sleep(1)
-            driver.find_element(by=By.XPATH, value='//*[@id="signInSubmit"]').click()
+        # Always load cookies, as login is handled externally
+        driver.get(f"https://{self.amazon_host}/")
+        with open(".cookies.pkl", "rb") as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                if 'domain' in cookie:
+                    del cookie['domain']
+                driver.add_cookie(cookie)
+        driver.refresh()
 
-            input("Once 2FA step is completed (if any), press Enter to continue...") # Wait for 2FA
-
-            # Save cookies to avoid always performing login+2FA
-            with open(".cookies.pkl", "wb") as f:
-                pickle.dump(driver.get_cookies(), f)
-
-        product_url = f"https://{self.amazon_host}/dp/{self.asin}"
-
-        while not self.stop_event.is_set():
+        while True:
             sleep(5 + random.uniform(0, 3))
             if self.stop_event.is_set():
                 break
             try:
-                driver.get(f"{product_url}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
+                driver.get(f"{self.product_url}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
                 sleep(10 + random.uniform(0, 3))
                 if self.stop_event.is_set():
                     break
@@ -376,7 +356,7 @@ class pricesdrop_bot(threading.Thread):
                 elif main_current_price <= self.cut_price:
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}", self.product_name)
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {self.product_url}", self.product_name)
                     if not self.autocheckout:
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
@@ -468,7 +448,7 @@ class pricesdrop_bot(threading.Thread):
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"{log_message} - ACCEPTED: Price is low enough.")
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {product_url}", self.product_name)
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {self.product_url}", self.product_name)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
@@ -500,10 +480,7 @@ class pricesdrop_bot(threading.Thread):
                 driver.refresh()
                 sleep(2 + random.uniform(0, 3))
             
-
         driver.quit()
-    
-        
 
 
 amazon_host=os.getenv("AMAZON_HOST") or "www.amazon.it"
@@ -546,8 +523,6 @@ def start_monitoring_product(product_data):
     t = pricesdrop_bot(
         amazon_host=amazon_host, 
         amazon_tag=amazon_tag, 
-        amazon_email=amazon_email, 
-        amazon_psw=amazon_psw, 
         product=product_data,
         stop_event=stop_event
     )
@@ -567,6 +542,37 @@ def stop_monitoring_product(asin):
     log(f"Stopped monitoring for product {asin}.")
 
 def amazon_monitor_main():
+    # Common Chrome options
+    common_options = selenium.webdriver.ChromeOptions()
+    common_options.add_argument("--no-sandbox")
+    common_options.add_argument("--disable-dev-shm-usage")
+    common_options.add_argument("--window-size=1920,1080")
+    common_options.add_argument("--disable-gpu")
+
+    if not os.path.exists(".cookies.pkl"):
+        log("No cookies found. Performing login in non-headless mode...")
+        login_options = common_options
+        login_driver = selenium.webdriver.Chrome(options=login_options)
+        # Perform login steps (extracted from autobuy_bot.run)
+        log("Performing login...")
+        login_driver.get(f"https://{amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2F0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
+        sleep(1)
+        login_driver.find_element(by=By.XPATH, value='//*[@id="ap_email"]').send_keys(amazon_email)
+        sleep(1)
+        login_driver.find_element(by=By.XPATH, value='//*[@id="continue"]').click()
+        sleep(1)
+        login_driver.find_element(by=By.XPATH, value='//*[@id="ap_password"]').send_keys(amazon_psw)
+        sleep(1)
+        login_driver.find_element(by=By.XPATH, value='//*[@id="signInSubmit"]').click()
+
+        input("Once 2FA step is completed (if any), press Enter to continue...") # Wait for 2FA
+
+        # Save cookies to avoid always performing login+2FA
+        with open(".cookies.pkl", "wb") as f:
+            pickle.dump(login_driver.get_cookies(), f)
+        login_driver.quit() # Quit the non-headless driver after login
+        log("Login completed and cookies saved.")
+
     # Load products from TOML file
     products_file = 'products.toml'
     sample_file = 'products.sample.toml'
