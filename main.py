@@ -35,7 +35,7 @@ class pricesdrop_bot(threading.Thread):
                     driver.add_cookie(cookie)
             driver.refresh()
         else:
-            driver.get("https://"+self.amazon_host+"/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F"+self.amazon_host+"%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
+            driver.get(f"https://{self.amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{self.amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
             sleep(1)
             driver.find_element(by=By.XPATH, value='//*[@id="ap_email"]').send_keys(self.amazon_email)
             sleep(1)
@@ -55,11 +55,37 @@ class pricesdrop_bot(threading.Thread):
         while check:
             sleep(2)
             try:
-                driver.get(f"https://{self.amazon_host}/dp/{self.asin}/ref=olp-opf-redir?aod=1{'&tag=' + self.amazon_tag if self.amazon_tag else ''}")
+                driver.get(f"https://{self.amazon_host}/dp/{self.asin}/ref=olp-opf-redir?aod=1{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
                 sleep(3)
 
+                # Check the main "Brand New" option (Featured Offer)
+                try:
+                    main_offer_container = driver.find_element(by=By.XPATH, value="//div[@id='aod-sticky-buybox']")
+                    main_price_element = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]")
+                    main_current_price = int(main_price_element.text.replace(".", "").replace(",", ""))
+
+                    if main_current_price <= self.cut_price:
+                        print(f"Price drop detected for main offer at: {main_current_price}")
+                        main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='aod-buybox-autocart-button']")
+                        main_add_to_cart_button.click()
+                        
+                        sleep(0.5)
+                        driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
+                        if self.autocheckout == True:
+                            driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
+                            driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
+                        
+                        check = False
+                    else:
+                        print(f"The current price for main offer is not low enough: {main_current_price}")
+                except Exception as e:
+                    print(f"Could not process main offer: {e}")
+
+                if not check: # If main offer was processed and bought, exit
+                    continue
+
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@id, 'aod-offer-') and .//input[@name='submit.addToCart']]")
-                print(f"{len(offer_containers)} offers found")
+                print(f"{len(offer_containers)} other offers found")
 
                 if not offer_containers:
                     driver.refresh()
@@ -113,7 +139,7 @@ products = [
 threads_list=[]
 
 for item in products:
-    print(f"Start looking for updates on product {item['asin']}...")
+    print(f"Start looking for price drop on product {item['asin']}: {('buy it' if item['autocheckout'] else 'add it to cart')} if price drops under {item['cut_price']}...")
     t=pricesdrop_bot(amazon_host=amazon_host, amazon_tag=amazon_tag, amazon_email=amazon_email, amazon_psw=amazon_psw, asin=item["asin"], cut_price=item["cut_price"], autocheckout=item["autocheckout"])
     t.start() 
     threads_list.append(t) 
