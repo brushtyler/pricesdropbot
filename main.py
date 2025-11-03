@@ -15,9 +15,148 @@ import sys
 import toml
 import random
 import requests
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def log(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] {message}")
+
+# States for adding a product
+ASK_ASIN, ASK_NAME, ASK_CUT_PRICE, ASK_AUTOCHECKOUT = range(4)
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! I am your Prices Drop Bot. Use /add to add a product or /delete to remove one.")
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Please send me the ASIN of the product you want to add.")
+    return ASK_ASIN
+
+async def add_asin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['asin'] = update.message.text
+    await update.message.reply_text("Please send me the name of the product.")
+    return ASK_NAME
+
+async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Please send me the cut price (e.g., 100.50).")
+    return ASK_CUT_PRICE
+
+async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data['cut_price'] = float(update.message.text)
+        await update.message.reply_text("Do you want to enable autocheckout for this product? (yes/no)")
+        return ASK_AUTOCHECKOUT
+    except ValueError:
+        await update.message.reply_text("Invalid price. Please enter a number (e.g., 100.50).")
+        return ASK_CUT_PRICE
+
+async def add_autocheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    autocheckout_str = update.message.text.lower()
+    context.user_data['autocheckout'] = autocheckout_str == 'yes'
+
+    product_data = {
+        "name": context.user_data['name'],
+        "asin": context.user_data['asin'],
+        "cut_price": context.user_data['cut_price'],
+        "autocheckout": context.user_data['autocheckout']
+    }
+
+    # Update products.toml
+    products_file = 'products.toml'
+    try:
+        with open(products_file, 'r', encoding='utf-8') as f:
+            products_toml = toml.load(f)
+    except FileNotFoundError:
+        products_toml = {}
+
+    products_toml[product_data['name']] = {
+        "asin": product_data['asin'],
+        "cut_price": product_data['cut_price'],
+        "autocheckout": product_data['autocheckout']
+    }
+
+    with open(products_file, 'w', encoding='utf-8') as f:
+        toml.dump(products_toml, f)
+
+    # Start monitoring the new product
+    start_monitoring_product(product_data)
+
+    await update.message.reply_text(f"Product '{product_data['name']}' added and monitoring started!")
+    return ConversationHandler.END
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Operation cancelled.")
+    return ConversationHandler.END
+
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Please provide the ASIN of the product to delete. Usage: /delete <ASIN>")
+        return
+    asin_to_delete = context.args[0]
+
+    # Stop monitoring the product
+    stop_monitoring_product(asin_to_delete)
+
+    # Remove from products.toml
+    products_file = 'products.toml'
+    try:
+        with open(products_file, 'r', encoding='utf-8') as f:
+            products_toml = toml.load(f)
+    except FileNotFoundError:
+        products_toml = {}
+
+    product_name_to_delete = None
+    for name, details in products_toml.items():
+        if details.get('asin') == asin_to_delete:
+            product_name_to_delete = name
+            break
+
+    if product_name_to_delete:
+        del products_toml[product_name_to_delete]
+        with open(products_file, 'w', encoding='utf-8') as f:
+            toml.dump(products_toml, f)
+        await update.message.reply_text(f"Product with ASIN {asin_to_delete} deleted and monitoring stopped.")
+    else:
+        await update.message.reply_text(f"Product with ASIN {asin_to_delete} not found in the monitoring list.")
+
+async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not active_threads:
+        await update.message.reply_text("No products are currently being monitored.")
+        return
+
+    message = "Currently monitored products:\n"
+    for asin, thread_info in active_threads.items():
+        product_name = thread_info['thread'].product_name
+        cut_price = thread_info['thread'].cut_price
+        autocheckout = thread_info['thread'].autocheckout
+        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autocheckout: {autocheckout})\n"
+    await update.message.reply_text(message, parse_mode="HTML")
+
+def telegram_bot_main():
+    application = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+
+    # Handlers
+    application.add_handler(CommandHandler("start", start_command))
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("add", add_command)],
+        states={
+            ASK_ASIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_asin)],
+            ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+            ASK_CUT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_cut_price)],
+            ASK_AUTOCHECKOUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_autocheckout)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_command)],
+    )
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("delete", delete_command))
+    application.add_handler(CommandHandler("list", list_command))
+
+    log("Telegram bot started polling...")
+    application.run_polling()
 
 def send_telegram_notification(message):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -40,8 +179,9 @@ def send_telegram_notification(message):
     else:
         log("Telegram bot token or chat ID not configured. Skipping notification.")
 
+
 class pricesdrop_bot(threading.Thread):
-    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,product):
+    def __init__(self,amazon_host,amazon_tag,amazon_email,amazon_psw,product, stop_event):
         self.amazon_host=amazon_host
         self.amazon_tag=amazon_tag
         self.amazon_email=amazon_email
@@ -55,6 +195,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_main_price = 0.0
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
+        self.stop_event = stop_event
         threading.Thread.__init__(self) 
 
     def _save_debug_html(self, driver, exception, context_name):
@@ -129,12 +270,15 @@ class pricesdrop_bot(threading.Thread):
             with open(".cookies.pkl", "wb") as f:
                 pickle.dump(driver.get_cookies(), f)
 
-        check = True
-        while check:
+        while not self.stop_event.is_set():
             sleep(5 + random.uniform(0, 3))
+            if self.stop_event.is_set():
+                break
             try:
                 driver.get(f"https://{self.amazon_host}/dp/{self.asin}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
                 sleep(10 + random.uniform(0, 3))
+                if self.stop_event.is_set():
+                    break
 
                 # Check for CAPTCHA page
                 try:
@@ -194,23 +338,20 @@ class pricesdrop_bot(threading.Thread):
                             log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
                     elif main_current_price <= self.cut_price:
                         if price_changed:
-                            log(f"Price drop detected for main offer at: {main_current_price:.2f}")
-                        
-                        log(f"{log_message} - ACCEPTED: Price is low enough.")
+                            log(f"{log_message} - ACCEPTED: Price is low enough.")
+                        product_url = f"https://{self.amazon_host}/dp/{self.asin}"
+                        send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {product_url}")
                         if not self.autocheckout:
                             main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                             main_add_to_cart_button.click()
                             log(f"[{self.product_name}] !!! Just added to cart !!!")
-                            send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {main_current_price:.2f}!")
                         else:
                             #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                             sleep(0.5)
                             #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
                             #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
                             log(f"[{self.product_name}] !!! Just bought !!!")
-                            send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                         
-                        check = False
                     else:
                         if price_changed:
                             log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
@@ -222,7 +363,7 @@ class pricesdrop_bot(threading.Thread):
                     line_number = exc_tb.tb_lineno
                     log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
 
-                if not check: # If main offer was processed and bought, exit
+                if self.stop_event.is_set(): # If main offer was processed and bought, exit
                     break
 
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
@@ -289,21 +430,18 @@ class pricesdrop_bot(threading.Thread):
 
                         if current_price <= self.cut_price:
                             if price_changed:
-                                log(f"Price drop detected at: {current_price:.2f}")
+                                log(f"{log_message} - ACCEPTED: Price is low enough.")
+                            product_url = f"https://{self.amazon_host}/dp/{self.asin}"
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {product_url}")
                             
-                            log(f"{log_message} - ACCEPTED: Price is low enough.")
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                                 add_to_cart_button.click()
                                 log(f"[{self.product_name}] !!! Just added to cart !!!")
-                                send_telegram_notification(f"Item {self.product_name} ({self.asin}) added to cart at {current_price:.2f}!")
                             else:
-                                #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                                 sleep(0.5)
-                                #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
-                                #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
+                                #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                                 log(f"[{self.product_name}] !!! Just bought !!!")
-                                send_telegram_notification(f"Item {self.product_name} ({self.asin}) bought at {current_price:.2f}!")
                             
                             check = False
                             break
@@ -315,7 +453,7 @@ class pricesdrop_bot(threading.Thread):
 
                 self.previous_offer_prices = new_offer_prices
                 
-                if not check: # If one of the other offers was processed and bought, exit
+                if self.stop_event.is_set(): # If one of the other offers was processed and bought, exit
                     break
 
             except Exception as e:
@@ -360,19 +498,73 @@ for name, details in products_toml.items():
     details['name'] = name
     products.append(details)
 
-threads_list=[]
+active_threads = {}
 
-for item in products:
-    log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
-    t=pricesdrop_bot(
+def start_monitoring_product(product_data):
+    asin = product_data['asin']
+    if asin in active_threads:
+        log(f"Product {asin} is already being monitored.")
+        return
+
+    stop_event = threading.Event()
+    t = pricesdrop_bot(
         amazon_host=amazon_host, 
         amazon_tag=amazon_tag, 
         amazon_email=amazon_email, 
         amazon_psw=amazon_psw, 
-        product=item
+        product=product_data,
+        stop_event=stop_event
     )
-    t.start() 
-    threads_list.append(t) 
-  
-for t in threads_list: 
-    t.join()
+    t.start()
+    active_threads[asin] = {'thread': t, 'stop_event': stop_event}
+    log(f"Started monitoring product '{product_data['name']}' ({asin}).")
+
+def stop_monitoring_product(asin):
+    if asin not in active_threads:
+        log(f"Product {asin} is not being monitored.")
+        return
+
+    log(f"Stopping monitoring for product {asin}...")
+    active_threads[asin]['stop_event'].set()
+    active_threads[asin]['thread'].join()
+    del active_threads[asin]
+    log(f"Stopped monitoring for product {asin}.")
+
+    del active_threads[asin]
+    log(f"Stopped monitoring for product {asin}.")
+
+def amazon_monitor_main():
+    # Load products from TOML file
+    products_file = 'products.toml'
+    sample_file = 'products.sample.toml'
+
+    try:
+        with open(products_file, 'r', encoding='utf-8') as f:
+            products_toml = toml.load(f)
+    except FileNotFoundError:
+        log(f"'{products_file}' not found.")
+        try:
+            with open(sample_file, 'r', encoding='utf-8') as s, open(products_file, 'w', encoding='utf-8') as p:
+                p.write(s.read())
+            log(f"Created '{products_file}' from '{sample_file}'. Please customize it with your products and run the script again.")
+        except FileNotFoundError:
+            log(f"'{sample_file}' not found! Cannot create {products_file}... Bail out!")
+        sys.exit()
+
+    products = []
+    for name, details in products_toml.items():
+        details['name'] = name
+        products.append(details)
+
+    for item in products:
+        log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
+        start_monitoring_product(item)
+
+
+if __name__ == '__main__':
+    # Start Amazon monitoring in a separate thread
+    amazon_thread = threading.Thread(target=amazon_monitor_main)
+    amazon_thread.start()
+
+    # Run Telegram bot in the main thread
+    telegram_bot_main()
