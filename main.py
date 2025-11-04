@@ -156,7 +156,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={amazon_tag}"
+        product_url = get_product_url(asin)
         scraped_data = scrape_product_data(driver, product_url, asin, asin, amazon_tag)
 
         product_name = scraped_data["product_name"]
@@ -175,7 +175,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, product_name)
         if not shortlink:
-            shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+            shortlink = product_url # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         item_count_str = ""
@@ -482,6 +482,10 @@ def generate_shortlink(driver, asin, product_name):
         log(f"Failed to generate shortlink for {asin}: {e}", product_name)
     return shortlink
 
+def get_product_url(asin):
+    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={amazon_tag}"
+
+
 class pricesdrop_bot(threading.Thread):
     def __init__(self, amazon_host, amazon_tag, product, stop_event):
         self.amazon_host=amazon_host
@@ -496,7 +500,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={self.amazon_tag}"
+        self.product_url = get_product_url(self.asin)
         threading.Thread.__init__(self) 
 
     def run(self):
