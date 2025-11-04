@@ -5,6 +5,8 @@ import subprocess
 
 import selenium
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from time import sleep
 import threading
 import os
@@ -158,7 +160,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Navigate to product page
         product_url = get_product_url(asin, amazon_tag)
-        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag)
+        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=True)
 
         product_name = scraped_data["product_name"]
         if not product_name:
@@ -186,6 +188,77 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         send_telegram_notification(final_message, image_url=product_image_url, log_id=log_id)
         await update.message.reply_text("Post notification sent.")
+
+    finally:
+        if driver:
+            driver.quit()
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /info <ASIN>")
+        return
+
+    asin = context.args[0]
+    log_id = f"/info {asin}"
+
+    driver = None
+    try:
+        # Start a new driver session
+        options = selenium.webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+        driver = selenium.webdriver.Chrome(options=options)
+
+        # Load cookies to be logged in
+        if not os.path.exists(".cookies.pkl"):
+            await update.message.reply_text("Cookies file not found. Cannot proceed without being logged in.")
+            return
+
+        driver.get(f"https://{amazon_host}/")
+        with open(".cookies.pkl", "rb") as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                if 'domain' in cookie:
+                    del cookie['domain']
+                driver.add_cookie(cookie)
+        driver.refresh()
+
+        # Navigate to product page
+        product_url = get_product_url(asin, amazon_tag)
+        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=True)
+
+        product_name = scraped_data["product_name"]
+        if not product_name:
+            await update.message.reply_text(f"Could not retrieve product name for {asin}.")
+            return
+
+        product_image_url = scraped_data["product_image_url"]
+        price = scraped_data["main_current_price"]
+        item_count = scraped_data["item_count"]
+        product_shortname_ai = scraped_data["product_shortname_ai"]
+        product_items_count_ai = scraped_data["product_items_count_ai"]
+
+        # Generate Shortlink
+        shortlink = generate_shortlink(driver, asin, log_id)
+        if not shortlink:
+            shortlink = product_url # Fallback to full URL if shortlink generation fails
+
+        # Construct and send message
+        message = f"""
+        Product Information for ASIN: {asin}
+        Name: {product_name}
+        Short Name (AI): {product_shortname_ai}
+        Item Count: {item_count}
+        Item Count (AI): {product_items_count_ai}
+        Price: {price:.2f} EUR
+        Image URL: {product_image_url}
+        Shortlink: {shortlink}
+        """
+
+        await update.message.reply_text(message)
 
     finally:
         if driver:
@@ -275,6 +348,7 @@ def telegram_bot_main():
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("post", post_command))
+    application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("reload", reload_command))
 
     log("Telegram bot started polling...")
@@ -309,11 +383,71 @@ def send_telegram_notification(message, image_url=None, log_id=None):
         log("Telegram bot token or chat ID not configured. Skipping notification.", log_id)
 
 
-def scrape_product_data(driver, product_url, log_id, asin, amazon_tag):
+def get_product_info_from_rufus(driver, log_id):
+    product_shortname_ai = ""
+    product_items_count_ai = ""
+    try:
+        log("Attempting to get info from RufusAI...", log_id)
+        
+        # Click the minimize button
+        minimize_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.ID, "rufus-panel-header-minimize"))
+        )
+        minimize_button.click()
+        log("Clicked RufusAI minimize button.", log_id)
+
+        # Wait for the text area to be visible and write the first query
+        text_area = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.ID, "rufus-text-area"))
+        )
+        text_area.send_keys("nome del prodotto abbreviato (risposta breve)")
+        log("Wrote first query to RufusAI.", log_id)
+
+        # Click the submit button
+        submit_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.ID, "rufus-submit-button"))
+        )
+        submit_button.click()
+        log("Clicked RufusAI submit button for first query.", log_id)
+
+        # Retrieve the answer
+        answer_element = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]'))
+        )
+        product_shortname_ai = answer_element.text
+        log(f"Retrieved product_shortname_ai: {product_shortname_ai}", log_id)
+
+        # Clear the text area and write the second query
+        text_area.clear()
+        text_area.send_keys("numero di articoli del prodotto (risposta breve)")
+        log("Wrote second query to RufusAI.", log_id)
+
+        # Click the submit button again
+        submit_button.click()
+        log("Clicked RufusAI submit button for second query.", log_id)
+
+        # Retrieve the second answer
+        answer_element_2 = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]'))
+        )
+        product_items_count_ai = answer_element_2.text
+        log(f"Retrieved product_items_count_ai: {product_items_count_ai}", log_id)
+
+    except Exception as e:
+        log(f"Could not get info from RufusAI: {e}", log_id)
+
+    return product_shortname_ai, product_items_count_ai
+
+def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=False):
     driver.get(product_url)
     sleep(10 + random.uniform(0, 3))
     handle_captcha(driver, log_id)
 
+    product_shortname_ai = ""
+    product_items_count_ai = ""
+    if use_rufus_ai:
+        # Get product info from RufusAI
+        product_shortname_ai, product_items_count_ai = get_product_info_from_rufus(driver, log_id)
     scraped_data = {
         "product_name": "",
         "item_count": 1,
@@ -323,6 +457,8 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag):
         "normalized_state": "unknown",
         "is_unavailable": False,
         "main_offer_container": None,
+        "product_shortname_ai": product_shortname_ai,
+        "product_items_count_ai": product_items_count_ai,
     }
 
     # Get product name
