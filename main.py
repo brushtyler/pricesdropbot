@@ -156,73 +156,24 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = f"https://{amazon_host}/dp/{asin}/offerta_selezionata_da={bot_name}"
-        driver.get(product_url)
-        sleep(5)
-        handle_captcha(driver, asin)
+        product_url = f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0{f'&tag={amazon_tag}' if amazon_tag else ''}"
+        scraped_data = scrape_product_data(driver, product_url, asin, asin, amazon_tag)
 
-        # Scrape Product Name
-        try:
-            product_name = driver.find_element(by=By.ID, value="productTitle").text.strip()
-        except NoSuchElementException:
-            log(f"Could not find product title for {asin}. Using ASIN as name.")
-            product_name = asin
+        product_name = scraped_data["product_name"]
+        if not product_name:
+            await update.message.reply_text(f"Could not retrieve product name for {asin}.")
+            return
 
-        # Scrape Price
-        price = -1.0
-        try:
-            MAIN_OFFER_CONTAINER_XPATHS = [
-                "//div[@id='qualifiedBuybox']",
-                "//div[@id='newAccordionRow_0']",
-                "//div[contains(@class, 'aod-pinned-offer') ]",
-                "//div[@id='aod-sticky-pinned-offer']",
-                "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart'] ]"
-            ]
-            main_offer_container = None
-            for xpath in MAIN_OFFER_CONTAINER_XPATHS:
-                try:
-                    main_offer_container = driver.find_element(by=By.XPATH, value=xpath)
-                    break
-                except NoSuchElementException:
-                    continue
-            
-            if not main_offer_container:
-                raise NoSuchElementException("Could not find main offer container")
-
-            price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
-            try:
-                price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
-                price = float(f"{price_whole_str}.{price_fraction_str}")
-            except NoSuchElementException:
-                price = float(price_whole_str)
-        except Exception as e:
-            log(f"Could not scrape price for {asin}: {e}", product_name)
-
+        price = scraped_data["main_current_price"]
         if price <= 0:
             await update.message.reply_text(f"Could not retrieve a valid price for {asin}.")
             return
 
-        # Scrape Item Count
-        item_count = 1
-        try:
-            item_count_element = driver.find_element(by=By.XPATH, value="//tr[contains(@class, 'po-number_of_items')]/td[2]/span")
-            item_count = int(item_count_element.text)
-        except (NoSuchElementException, ValueError) as e:
-            log(f"Could not find or parse item count for {asin}. Defaulting to 1. Error: {e}", product_name)
-            item_count = 1
+        item_count = scraped_data["item_count"]
 
         # Generate Shortlink
-        shortlink = ""
-        try:
-            get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
-            get_link_button.click()
-            log(f"Clicked 'amzn-ss-get-link-button' for {asin}", product_name)
-            sleep(2)
-            shortlink_textarea = driver.find_element(by=By.ID, value="amzn-ss-text-shortlink-textarea")
-            shortlink = shortlink_textarea.text
-            log(f"Generated shortlink for {asin}: {shortlink}", product_name)
-        except Exception as e:
-            log(f"Failed to generate shortlink for {asin}: {e}", product_name)
+        shortlink = generate_shortlink(driver, asin, product_name)
+        if not shortlink:
             await update.message.reply_text(f"Failed to generate shortlink for {asin}. The notification will be sent without it.")
 
         # Construct and send message
@@ -355,6 +306,149 @@ def send_telegram_notification(message, product_name=None, image_url=None):
         log("Telegram bot token or chat ID not configured. Skipping notification.", product_name)
 
 
+def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_tag):
+    driver.get(product_url)
+    sleep(10 + random.uniform(0, 3))
+    handle_captcha(driver, product_name_for_log)
+
+    scraped_data = {
+        "product_name": "",
+        "item_count": 1,
+        "product_image_url": None,
+        "main_current_price": -1.0,
+        "condition_text": "N/A",
+        "normalized_state": "unknown",
+        "is_unavailable": False,
+        "main_offer_container": None,
+    }
+
+    # Get product name
+    try:
+        scraped_data["product_name"] = driver.find_element(by=By.ID, value="productTitle").text.strip()
+    except Exception as e:
+        log(f"Could not find product name: {e}", product_name_for_log)
+
+    # Retrieve item count
+    try:
+        item_count_xpaths = [
+            "//tr[contains(@class, 'po-number_of_items')]/td[2]/span",
+            "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Numero di articoli')]]//span[@class='a-size-base a-color-tertiary']",
+            "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Number of Items')]]//span[@class='a-size-base a-color-tertiary']",
+            "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Numero di articoli')]/following-sibling::span",
+            "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Number of Items')]/following-sibling::span"
+        ]
+        for xpath in item_count_xpaths:
+            try:
+                item_count_element = driver.find_element(by=By.XPATH, value=xpath)
+                scraped_data["item_count"] = int(item_count_element.text)
+                break  # if found, break the loop
+            except (NoSuchElementException, ValueError):
+                continue  # if not found, try the next xpath
+    except Exception as e:
+        log(f"Could not find or parse item count: {e}", product_name_for_log)
+    
+    # Try to find the product image URL
+    try:
+        image_xpaths = [
+            "//img[@id='landingImage']",
+            "//img[@id='imgBlkFront']",
+            "//div[contains(@class, 'imgTagWrapper')]/img"
+        ]
+        for xpath in image_xpaths:
+            try:
+                image_element = driver.find_element(by=By.XPATH, value=xpath)
+                scraped_data["product_image_url"] = image_element.get_attribute('src')
+                if scraped_data["product_image_url"]:
+                    break
+            except NoSuchElementException:
+                continue
+    except Exception as e:
+        log(f"Could not find product image: {e}", product_name_for_log)
+
+    # Check for product unavailability
+    try:
+        unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
+        if unavailable_element:
+            scraped_data["is_unavailable"] = True
+            scraped_data["main_current_price"] = -1.0
+    except NoSuchElementException:
+        pass
+
+    # Check the main "Brand New" option (Featured Offer) only if not already determined as unavailable
+    if not scraped_data["is_unavailable"]:
+        try:
+            MAIN_OFFER_CONTAINER_XPATHS = [
+                "//div[@id='qualifiedBuybox']",
+                "//div[@id='newAccordionRow_0']",
+                "//div[@id='newAccordionRow_1']",
+                "//div[@data-a-accordion-row-name='newAccordionRow']",
+                "//div[contains(@class, 'aod-pinned-offer')]",
+                "//div[@id='aod-sticky-pinned-offer']",
+                "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]",
+                "//div[@id='desktop_qualifiedBuyBox']"
+            ]
+            main_offer_container, _ = find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container")
+            scraped_data["main_offer_container"] = main_offer_container
+
+            price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+            try:
+                price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                scraped_data["main_current_price"] = float(f"{price_whole_str}.{price_fraction_str}")
+            except NoSuchElementException:
+                scraped_data["main_current_price"] = float(price_whole_str)
+
+            scraped_data["condition_text"] = "New"
+            try:
+                used_element = main_offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
+                if used_element:
+                    scraped_data["condition_text"] = used_element.text.strip()
+            except NoSuchElementException:
+                pass
+
+            scraped_data["normalized_state"] = "new"
+            condition_cleaned = scraped_data["condition_text"].lower()
+            if "usato" in condition_cleaned or "used" in condition_cleaned:
+                scraped_data["normalized_state"] = "used"
+        except NoSuchElementException as e:
+            save_debug_html(driver, e, "main_offer", product_name_for_log, asin)
+        except Exception as e:
+            save_debug_html(driver, e, "main_offer", product_name_for_log, asin)
+            exc_type, exc_value, exc_tb = sys.exc_info()
+            file_name = exc_tb.tb_frame.f_code.co_filename
+            line_number = exc_tb.tb_lineno
+            log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}", product_name_for_log)
+
+    return scraped_data
+
+def find_element_by_multiple_xpaths(driver, xpaths, description="element"):
+    for xpath in xpaths:
+        try:
+            element = driver.find_element(by=By.XPATH, value=xpath)
+            return element, xpath
+        except NoSuchElementException:
+            continue
+    raise NoSuchElementException(f"Could not find {description} using any of the provided XPaths: {xpaths}")
+
+def save_debug_html(driver, exception, context_name, product_name, asin):
+    exc_type, exc_value, exc_tb = sys.exc_info()
+    file_name = exc_tb.tb_frame.f_code.co_filename
+    line_number = exc_tb.tb_lineno
+    current_url = driver.current_url
+    error_message = f"URL: {current_url}, File: {file_name}, Line: {line_number}, Error: {exception}"
+    
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+        
+    safe_product_name = product_name.replace(' ', '_')
+    html_file_name = os.path.join(logs_dir, f"debug_{context_name}_not_found_{safe_product_name}_{asin}.html")
+    
+    with open(html_file_name, "w", encoding="utf-8") as f:
+        f.write(f"<!-- {error_message} -->\n")
+        f.write(driver.page_source)
+        
+    log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}", product_name)
+
 def handle_captcha(driver, product_name_for_log):
     try:
         captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] | //h4[contains(text(), 'Click the button below to continue shopping')] ")
@@ -372,6 +466,20 @@ def handle_captcha(driver, product_name_for_log):
         pass # No CAPTCHA
     return False # No CAPTCHA was found/handled
 
+def generate_shortlink(driver, asin, product_name):
+    shortlink = ""
+    try:
+        get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
+        get_link_button.click()
+        log(f"Clicked 'amzn-ss-get-link-button' for {asin}", product_name)
+        sleep(2)
+        shortlink_textarea = driver.find_element(by=By.ID, value="amzn-ss-text-shortlink-textarea")
+        shortlink = shortlink_textarea.text
+        log(f"Generated shortlink for {asin}: {shortlink}", product_name)
+    except Exception as e:
+        log(f"Failed to generate shortlink for {asin}: {e}", product_name)
+    return shortlink
+
 class pricesdrop_bot(threading.Thread):
     def __init__(self, amazon_host, amazon_tag, product, stop_event):
         self.amazon_host=amazon_host
@@ -386,47 +494,8 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/offerta_selezionata_da={bot_name}"
+        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/?offerta_selezionata_da={bot_name}&aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}"
         threading.Thread.__init__(self) 
-
-    def _save_debug_html(self, driver, exception, context_name):
-        exc_type, exc_value, exc_tb = sys.exc_info()
-        file_name = exc_tb.tb_frame.f_code.co_filename
-        line_number = exc_tb.tb_lineno
-        current_url = driver.current_url
-        error_message = f"URL: {current_url}, File: {file_name}, Line: {line_number}, Error: {exception}"
-        
-        logs_dir = "logs"
-        if not os.path.exists(logs_dir):
-            os.makedirs(logs_dir)
-            
-        safe_product_name = self.product_name.replace(' ', '_')
-        html_file_name = os.path.join(logs_dir, f"debug_{context_name}_not_found_{safe_product_name}_{self.asin}.html")
-        
-        with open(html_file_name, "w", encoding="utf-8") as f:
-            f.write(f"<!-- {error_message} -->\n")
-            f.write(driver.page_source)
-            
-        log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}", self.product_name)
-
-    def _find_element_by_multiple_xpaths(self, driver, xpaths, description="element", xpath_tracker_attribute_name=None):
-        for xpath in xpaths:
-            try:
-                element = driver.find_element(by=By.XPATH, value=xpath)
-                
-                if xpath_tracker_attribute_name:
-                    previous_xpath = getattr(self, xpath_tracker_attribute_name, None)
-                    if xpath != previous_xpath:
-                        log(f"Found {description} using new XPath: {xpath} (previously: {previous_xpath})", self.product_name)
-                        setattr(self, xpath_tracker_attribute_name, xpath)
-                    # else: no change, no log
-                else:
-                    log(f"Found {description} using XPath: {xpath}", self.product_name) # Log always if no tracker
-                
-                return element
-            except NoSuchElementException:
-                continue
-        raise NoSuchElementException(f"Could not find {description} using any of the provided XPaths: {xpaths}")
 
     def run(self):
         options = selenium.webdriver.ChromeOptions()
@@ -453,85 +522,16 @@ class pricesdrop_bot(threading.Thread):
             if self.stop_event.is_set():
                 break
             try:
-                driver.get(f"{self.product_url}/?aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}")
-                sleep(10 + random.uniform(0, 3))
+                scraped_data = scrape_product_data(driver, self.product_url, self.product_name, self.asin, self.amazon_tag)
                 if self.stop_event.is_set():
                     break
 
-                # Check for CAPTCHA page
-                handle_captcha(driver, self.product_name)
+                self.product_image_url = scraped_data["product_image_url"]
+                main_current_price = scraped_data["main_current_price"]
+                condition_text = scraped_data["condition_text"]
+                normalized_state = scraped_data["normalized_state"]
+                main_offer_container = scraped_data["main_offer_container"] # Keep for add to cart button
 
-                # Try to find the product image URL
-                self.product_image_url = None
-                try:
-                    image_xpaths = [
-                        "//img[@id='landingImage']",
-                        "//img[@id='imgBlkFront']",
-                        "//div[contains(@class, 'imgTagWrapper')]/img"
-                    ]
-                    for xpath in image_xpaths:
-                        try:
-                            image_element = driver.find_element(by=By.XPATH, value=xpath)
-                            self.product_image_url = image_element.get_attribute('src')
-                            if self.product_image_url:
-                                break
-                        except NoSuchElementException:
-                            continue
-                except Exception as e:
-                    log(f"Could not find product image: {e}", self.product_name)
-
-                # Check for product unavailability
-                main_current_price = None # Default to an invalid price
-                condition_text = "N/A" # Initialize with default value
-                normalized_state = "unknown" # Initialize with default value
-                try:
-                    unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
-                    if unavailable_element:
-                        main_current_price = -1.0  # Product is unavailable
-                except NoSuchElementException:
-                    # Product is not explicitly marked as unavailable, proceed to check for main offer
-                    pass
-
-                # Check the main "Brand New" option (Featured Offer) only if not already determined as unavailable
-                if main_current_price != -1.0:
-                    try:
-                        MAIN_OFFER_CONTAINER_XPATHS = [
-                            "//div[@id='qualifiedBuybox']",
-                            "//div[@id='newAccordionRow_0']",
-                            "//div[contains(@class, 'aod-pinned-offer')]",
-                            "//div[@id='aod-sticky-pinned-offer']",
-                            "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]"
-                        ]
-                        main_offer_container = self._find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container", "previous_main_offer_xpath")
-                        price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
-                        try:
-                            price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
-                            main_current_price = float(f"{price_whole_str}.{price_fraction_str}")
-                        except NoSuchElementException:
-                            main_current_price = float(price_whole_str)
-
-                        condition_text = "New" # Default to New
-                        # Try to find any text within the main offer container that indicates "used"
-                        try:
-                            # Search for "Usato" (Used) or "Used" within the main offer container
-                            used_element = main_offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
-                            if used_element:
-                                condition_text = used_element.text.strip() # Get the actual text if found
-                        except NoSuchElementException:
-                            pass # No explicit "used" text found, keep default "New"
-
-                        normalized_state = "new"
-                        condition_cleaned = condition_text.lower()
-                        if "usato" in condition_cleaned or "used" in condition_cleaned:
-                            normalized_state = "used"
-                    except NoSuchElementException as e:
-                        self._save_debug_html(driver, e, "main_offer")
-                    except Exception as e:
-                        exc_type, exc_value, exc_tb = sys.exc_info()
-                        file_name = exc_tb.tb_frame.f_code.co_filename
-                        line_number = exc_tb.tb_lineno
-                        log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}")
-                
                 price_changed = main_current_price != self.previous_main_price
 
                 if main_current_price == -1.0:
@@ -553,7 +553,10 @@ class pricesdrop_bot(threading.Thread):
                 elif main_current_price <= self.cut_price:
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {self.product_url}", self.product_name, image_url=self.product_image_url)
+                    shortlink = generate_shortlink(driver, self.asin, self.product_name)
+                    if not shortlink:
+                        shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", self.product_name, image_url=self.product_image_url)
                     if not self.autocheckout:
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
@@ -645,7 +648,10 @@ class pricesdrop_bot(threading.Thread):
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"{log_message} - ACCEPTED: Price is low enough.")
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {self.product_url}", self.product_name, image_url=self.product_image_url)
+                            shortlink = generate_shortlink(driver, self.asin, self.product_name)
+                            if not shortlink:
+                                shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", self.product_name, image_url=self.product_image_url)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
@@ -662,7 +668,7 @@ class pricesdrop_bot(threading.Thread):
                             if price_changed:
                                 log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
                     except Exception as e:
-                        self._save_debug_html(driver, e, "other_offer")
+                        save_debug_html(driver, e, "other_offer", self.product_name, self.asin)
 
                 self.previous_offer_prices = new_offer_prices
                 
@@ -777,7 +783,7 @@ def amazon_monitor_main(monitoring_started_event):
         sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="signInSubmit"]').click()
 
-        input("Once 2FA step is completed (if any), press Enter to continue...") # Wait for 2FA
+        input("Please complete the login on the browser. If you have to complete a 2FA, do it. Once you are logged in, press Enter here to continue...") # Wait for user to complete login and 2FA (if any)
 
         # Save cookies to avoid always performing login+2FA
         with open(".cookies.pkl", "wb") as f:
