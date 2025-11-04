@@ -122,6 +122,121 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"Product with ASIN {asin_to_delete} not found in the monitoring list.")
 
+async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /post <ASIN> <message>")
+        return
+
+    asin = context.args[0]
+    custom_message = " ".join(context.args[1:])
+
+    driver = None
+    try:
+        # Start a new driver session
+        options = selenium.webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+        driver = selenium.webdriver.Chrome(options=options)
+
+        # Load cookies to be logged in
+        if not os.path.exists(".cookies.pkl"):
+            await update.message.reply_text("Cookies file not found. Cannot proceed without being logged in.")
+            return
+            
+        driver.get(f"https://{amazon_host}/")
+        with open(".cookies.pkl", "rb") as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                if 'domain' in cookie:
+                    del cookie['domain']
+                driver.add_cookie(cookie)
+        driver.refresh()
+
+        # Navigate to product page
+        product_url = f"https://{amazon_host}/dp/{asin}/offerta_selezionata_da={bot_name}"
+        driver.get(product_url)
+        sleep(5)
+        handle_captcha(driver, asin)
+
+        # Scrape Product Name
+        try:
+            product_name = driver.find_element(by=By.ID, value="productTitle").text.strip()
+        except NoSuchElementException:
+            log(f"Could not find product title for {asin}. Using ASIN as name.")
+            product_name = asin
+
+        # Scrape Price
+        price = -1.0
+        try:
+            MAIN_OFFER_CONTAINER_XPATHS = [
+                "//div[@id='qualifiedBuybox']",
+                "//div[@id='newAccordionRow_0']",
+                "//div[contains(@class, 'aod-pinned-offer') ]",
+                "//div[@id='aod-sticky-pinned-offer']",
+                "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart'] ]"
+            ]
+            main_offer_container = None
+            for xpath in MAIN_OFFER_CONTAINER_XPATHS:
+                try:
+                    main_offer_container = driver.find_element(by=By.XPATH, value=xpath)
+                    break
+                except NoSuchElementException:
+                    continue
+            
+            if not main_offer_container:
+                raise NoSuchElementException("Could not find main offer container")
+
+            price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+            try:
+                price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                price = float(f"{price_whole_str}.{price_fraction_str}")
+            except NoSuchElementException:
+                price = float(price_whole_str)
+        except Exception as e:
+            log(f"Could not scrape price for {asin}: {e}", product_name)
+
+        if price <= 0:
+            await update.message.reply_text(f"Could not retrieve a valid price for {asin}.")
+            return
+
+        # Scrape Item Count
+        item_count = 1
+        try:
+            item_count_element = driver.find_element(by=By.XPATH, value="//tr[contains(@class, 'po-number_of_items')]/td[2]/span")
+            item_count = int(item_count_element.text)
+        except (NoSuchElementException, ValueError) as e:
+            log(f"Could not find or parse item count for {asin}. Defaulting to 1. Error: {e}", product_name)
+            item_count = 1
+
+        # Generate Shortlink
+        shortlink = ""
+        try:
+            get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
+            get_link_button.click()
+            log(f"Clicked 'amzn-ss-get-link-button' for {asin}", product_name)
+            sleep(2)
+            shortlink_textarea = driver.find_element(by=By.ID, value="amzn-ss-text-shortlink-textarea")
+            shortlink = shortlink_textarea.text
+            log(f"Generated shortlink for {asin}: {shortlink}", product_name)
+        except Exception as e:
+            log(f"Failed to generate shortlink for {asin}: {e}", product_name)
+            await update.message.reply_text(f"Failed to generate shortlink for {asin}. The notification will be sent without it.")
+
+        # Construct and send message
+        item_count_str = ""
+        if item_count != 1:
+            item_count_str = f", {item_count} pezzi"
+        final_message = f"{product_name}{item_count_str} a {price:.2f}EUR\n{custom_message}\n{shortlink}"
+        send_telegram_notification(final_message, product_name)
+        await update.message.reply_text("Post notification sent.")
+
+    finally:
+        if driver:
+            driver.quit()
+
 async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Reloading products from products.toml...")
     
@@ -185,8 +300,9 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autocheckout: {autocheckout})\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
+
 def telegram_bot_main():
-    application = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+    application = Application.builder().token(bot_token).build()
 
     # Handlers
     application.add_handler(CommandHandler("start", start_command))
@@ -204,14 +320,13 @@ def telegram_bot_main():
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("list", list_command))
+    application.add_handler(CommandHandler("post", post_command))
     application.add_handler(CommandHandler("reload", reload_command))
 
     log("Telegram bot started polling...")
     application.run_polling()
 
 def send_telegram_notification(message, product_name=None, image_url=None):
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if bot_token and chat_id:
         if image_url:
             url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
@@ -240,6 +355,23 @@ def send_telegram_notification(message, product_name=None, image_url=None):
         log("Telegram bot token or chat ID not configured. Skipping notification.", product_name)
 
 
+def handle_captcha(driver, product_name_for_log):
+    try:
+        captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] | //h4[contains(text(), 'Click the button below to continue shopping')] ")
+        if captcha_text_element:
+            log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", product_name_for_log)
+            random_delay = random.uniform(0, 3)
+            log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", product_name_for_log)
+            sleep(random_delay)
+            continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] | //button[contains(text(), 'Continue with your order')] ")
+            continue_button.click()
+            log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", product_name_for_log)
+            sleep(3 + random.uniform(0, 3))
+            return True # CAPTCHA was handled
+    except NoSuchElementException:
+        pass # No CAPTCHA
+    return False # No CAPTCHA was found/handled
+
 class pricesdrop_bot(threading.Thread):
     def __init__(self, amazon_host, amazon_tag, product, stop_event):
         self.amazon_host=amazon_host
@@ -254,7 +386,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}"
+        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/offerta_selezionata_da={bot_name}"
         threading.Thread.__init__(self) 
 
     def _save_debug_html(self, driver, exception, context_name):
@@ -327,21 +459,7 @@ class pricesdrop_bot(threading.Thread):
                     break
 
                 # Check for CAPTCHA page
-                try:
-                    captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] | //h4[contains(text(), 'Click the button below to continue shopping')] ")
-                    if captcha_text_element:
-                        log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", self.product_name)
-                        # Add random delay before clicking
-                        random_delay = random.uniform(0, 3)
-                        log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", self.product_name)
-                        sleep(random_delay)
-                        # Find and click the "Continua con gli acquisti" button
-                        continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] | //button[contains(text(), 'Continue with your order')] ")
-                        continue_button.click()
-                        log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", self.product_name)
-                        sleep(3 + random.uniform(0, 3)) # Wait for the page to load after clicking the button
-                except NoSuchElementException:
-                    pass # No CAPTCHA detected, continue as usual
+                handle_captcha(driver, self.product_name)
 
                 # Try to find the product image URL
                 self.product_image_url = None
@@ -561,13 +679,6 @@ class pricesdrop_bot(threading.Thread):
             
         driver.quit()
 
-
-amazon_host=os.getenv("AMAZON_HOST") or "www.amazon.it"
-amazon_tag=os.getenv("AMAZON_TAG") or None
-
-amazon_email=os.getenv("AMAZON_EMAIL")
-amazon_psw=os.getenv("AMAZON_PASSWORD")
-
 def load_products_from_toml():
     products_file = 'products.toml'
     sample_file = 'products.sample.toml'
@@ -590,13 +701,6 @@ def load_products_from_toml():
         details['name'] = name
         products.append(details)
     return products
-
-# Load products from TOML file
-products = load_products_from_toml()
-if products is None:
-    sys.exit()
-
-active_threads = {}
 
 def start_monitoring_product(product_data):
     asin = product_data['asin']
@@ -695,6 +799,23 @@ def amazon_monitor_main(monitoring_started_event):
     monitoring_started_event.set()
     log("Amazon monitoring initial setup complete. Telegram bot can now start.")
 
+
+bot_name = os.getenv("TELEGRAM_BOT_NAME") or "pricesdrop.it"
+bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+amazon_host=os.getenv("AMAZON_HOST") or "www.amazon.it"
+amazon_tag=os.getenv("AMAZON_TAG") or None
+amazon_email=os.getenv("AMAZON_EMAIL")
+amazon_psw=os.getenv("AMAZON_PASSWORD")
+
+
+# Load products from TOML file
+products = load_products_from_toml()
+if products is None:
+    sys.exit()
+
+active_threads = {}
 
 if __name__ == '__main__':
     monitoring_started_event = threading.Event()
