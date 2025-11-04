@@ -129,6 +129,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asin = context.args[0]
     custom_message = " ".join(context.args[1:])
+    log_id = f"/post {asin}"
 
     driver = None
     try:
@@ -156,8 +157,8 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = get_product_url(asin)
-        scraped_data = scrape_product_data(driver, product_url, asin, asin, amazon_tag)
+        product_url = get_product_url(asin, amazon_tag)
+        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag)
 
         product_name = scraped_data["product_name"]
         if not product_name:
@@ -173,7 +174,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         item_count = scraped_data["item_count"]
 
         # Generate Shortlink
-        shortlink = generate_shortlink(driver, asin, product_name)
+        shortlink = generate_shortlink(driver, asin, log_id)
         if not shortlink:
             shortlink = product_url # Fallback to full URL if shortlink generation fails
 
@@ -183,7 +184,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             item_count_str = f", {item_count} pezzi"
         final_message = f"{product_name}{item_count_str} a {price:.2f}EUR\n{custom_message}\n{shortlink}"
 
-        send_telegram_notification(final_message, product_name, product_image_url)
+        send_telegram_notification(final_message, image_url=product_image_url, log_id=log_id)
         await update.message.reply_text("Post notification sent.")
 
     finally:
@@ -279,7 +280,7 @@ def telegram_bot_main():
     log("Telegram bot started polling...")
     application.run_polling()
 
-def send_telegram_notification(message, product_name=None, image_url=None):
+def send_telegram_notification(message, image_url=None, log_id=None):
     if bot_token and chat_id:
         if image_url:
             url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
@@ -299,19 +300,19 @@ def send_telegram_notification(message, product_name=None, image_url=None):
         try:
             response = requests.post(url, json=payload)
             if response.status_code == 200:
-                log("Telegram notification sent successfully.", product_name)
+                log("Telegram notification sent successfully.", log_id)
             else:
-                log(f"Failed to send Telegram notification. Status code: {response.status_code}, Response: {response.text}", product_name)
+                log(f"Failed to send Telegram notification. Status code: {response.status_code}, Response: {response.text}", log_id)
         except Exception as e:
-            log(f"An error occurred while sending Telegram notification: {e}", product_name)
+            log(f"An error occurred while sending Telegram notification: {e}", log_id)
     else:
-        log("Telegram bot token or chat ID not configured. Skipping notification.", product_name)
+        log("Telegram bot token or chat ID not configured. Skipping notification.", log_id)
 
 
-def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_tag):
+def scrape_product_data(driver, product_url, log_id, asin, amazon_tag):
     driver.get(product_url)
     sleep(10 + random.uniform(0, 3))
-    handle_captcha(driver, product_name_for_log)
+    handle_captcha(driver, log_id)
 
     scraped_data = {
         "product_name": "",
@@ -328,7 +329,7 @@ def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_
     try:
         scraped_data["product_name"] = driver.find_element(by=By.ID, value="productTitle").text.strip()
     except Exception as e:
-        log(f"Could not find product name: {e}", product_name_for_log)
+        log(f"Could not find product name: {e}", log_id)
 
     # Retrieve item count
     try:
@@ -347,7 +348,7 @@ def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_
             except (NoSuchElementException, ValueError):
                 continue  # if not found, try the next xpath
     except Exception as e:
-        log(f"Could not find or parse item count: {e}", product_name_for_log)
+        log(f"Could not find or parse item count: {e}", log_id)
     
     # Try to find the product image URL
     try:
@@ -365,7 +366,7 @@ def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_
             except NoSuchElementException:
                 continue
     except Exception as e:
-        log(f"Could not find product image: {e}", product_name_for_log)
+        log(f"Could not find product image: {e}", log_id)
 
     # Check for product unavailability
     try:
@@ -412,13 +413,13 @@ def scrape_product_data(driver, product_url, product_name_for_log, asin, amazon_
             if "usato" in condition_cleaned or "used" in condition_cleaned:
                 scraped_data["normalized_state"] = "used"
         except NoSuchElementException as e:
-            save_debug_html(driver, e, "main_offer", product_name_for_log, asin)
+            save_debug_html(driver, e, "main_offer", asin, log_id)
         except Exception as e:
-            save_debug_html(driver, e, "main_offer", product_name_for_log, asin)
+            save_debug_html(driver, e, "main_offer", asin, log_id)
             exc_type, exc_value, exc_tb = sys.exc_info()
             file_name = exc_tb.tb_frame.f_code.co_filename
             line_number = exc_tb.tb_lineno
-            log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}", product_name_for_log)
+            log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}", log_id)
 
     return scraped_data
 
@@ -431,7 +432,7 @@ def find_element_by_multiple_xpaths(driver, xpaths, description="element"):
             continue
     raise NoSuchElementException(f"Could not find {description} using any of the provided XPaths: {xpaths}")
 
-def save_debug_html(driver, exception, context_name, product_name, asin):
+def save_debug_html(driver, exception, context_name, asin, log_id):
     exc_type, exc_value, exc_tb = sys.exc_info()
     file_name = exc_tb.tb_frame.f_code.co_filename
     line_number = exc_tb.tb_lineno
@@ -442,47 +443,46 @@ def save_debug_html(driver, exception, context_name, product_name, asin):
     if not os.path.exists(logs_dir):
         os.makedirs(logs_dir)
         
-    safe_product_name = product_name.replace(' ', '_')
-    html_file_name = os.path.join(logs_dir, f"debug_{context_name}_not_found_{safe_product_name}_{asin}.html")
+    html_file_name = os.path.join(logs_dir, f"debug_{context_name}_not_found_{asin}.html")
     
     with open(html_file_name, "w", encoding="utf-8") as f:
         f.write(f"<!-- {error_message} -->\n")
         f.write(driver.page_source)
         
-    log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}", product_name)
+    log(f"Error during '{context_name}' processing. Page HTML saved to {html_file_name} for debugging. {error_message}", log_id)
 
-def handle_captcha(driver, product_name_for_log):
+def handle_captcha(driver, log_id):
     try:
         captcha_text_element = driver.find_element(by=By.XPATH, value="//h4[contains(text(), 'Fai clic sul pulsante qui sotto per continuare a fare acquisti')] | //h4[contains(text(), 'Type the characters you see in this image')] | //h4[contains(text(), 'Click the button below to continue shopping')] ")
         if captcha_text_element:
-            log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", product_name_for_log)
+            log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", log_id)
             random_delay = random.uniform(0, 3)
-            log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", product_name_for_log)
+            log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", log_id)
             sleep(random_delay)
             continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] | //button[contains(text(), 'Continue with your order')] ")
             continue_button.click()
-            log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", product_name_for_log)
+            log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", log_id)
             sleep(3 + random.uniform(0, 3))
             return True # CAPTCHA was handled
     except NoSuchElementException:
         pass # No CAPTCHA
     return False # No CAPTCHA was found/handled
 
-def generate_shortlink(driver, asin, product_name):
+def generate_shortlink(driver, asin, log_id):
     shortlink = ""
     try:
         get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
         get_link_button.click()
-        log(f"Clicked 'amzn-ss-get-link-button' for {asin}", product_name)
+        log(f"Clicked 'amzn-ss-get-link-button' for {asin}", log_id)
         sleep(2)
         shortlink_textarea = driver.find_element(by=By.ID, value="amzn-ss-text-shortlink-textarea")
         shortlink = shortlink_textarea.text
-        log(f"Generated shortlink for {asin}: {shortlink}", product_name)
+        log(f"Generated shortlink for {asin}: {shortlink}", log_id)
     except Exception as e:
-        log(f"Failed to generate shortlink for {asin}: {e}", product_name)
+        log(f"Failed to generate shortlink for {asin}: {e}", log_id)
     return shortlink
 
-def get_product_url(asin):
+def get_product_url(asin, amazon_tag):
     return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={amazon_tag}"
 
 
@@ -500,7 +500,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = get_product_url(self.asin)
+        self.product_url = get_product_url(self.asin, self.amazon_tag)
         threading.Thread.__init__(self) 
 
     def run(self):
@@ -523,12 +523,14 @@ class pricesdrop_bot(threading.Thread):
                 driver.add_cookie(cookie)
         driver.refresh()
 
+        log_id = self.product_name
+
         while True:
             sleep(5 + random.uniform(0, 3))
             if self.stop_event.is_set():
                 break
             try:
-                scraped_data = scrape_product_data(driver, self.product_url, self.product_name, self.asin, self.amazon_tag)
+                scraped_data = scrape_product_data(driver, self.product_url, log_id, self.asin, self.amazon_tag)
                 if self.stop_event.is_set():
                     break
 
@@ -549,34 +551,34 @@ class pricesdrop_bot(threading.Thread):
 
                 if main_current_price == -1.0:
                     if price_changed:
-                        log(f"{log_message}", self.product_name)
+                        log(f"{log_message}", log_id)
                 elif main_current_price is None:
                     if price_changed:
-                        log(f"{log_message} - ERROR: unable to get main offer's current price...", self.product_name)
+                        log(f"{log_message} - ERROR: unable to get main offer's current price...", log_id)
                 elif self.object_state and normalized_state not in self.object_state:
                     if price_changed:
-                        log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", self.product_name)
+                        log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", log_id)
                 elif main_current_price <= self.cut_price:
                     if price_changed:
-                        log(f"{log_message} - ACCEPTED: Price is low enough.", self.product_name)
-                    shortlink = generate_shortlink(driver, self.asin, self.product_name)
+                        log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
+                    shortlink = generate_shortlink(driver, self.asin, log_id)
                     if not shortlink:
                         shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", self.product_name, image_url=product_image_url)
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", image_url=product_image_url, log_id=log_id)
                     if not self.autocheckout:
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
-                        log(f"!!! Just added to cart !!!", self.product_name)
+                        log(f"!!! Just added to cart !!!", log_id)
                     else:
                         #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
                         sleep(0.5)
                         #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
                         #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                        log(f"!!! Just bought !!!", self.product_name)
+                        log(f"!!! Just bought !!!", log_id)
                     
                 else:
                     if price_changed:
-                        log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", self.product_name)
+                        log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", log_id)
                 
                 # Update previous_main_price after all processing for the current iteration
                 self.previous_main_price = main_current_price
@@ -587,7 +589,7 @@ class pricesdrop_bot(threading.Thread):
                 offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
                 current_offer_count = len(offer_containers)
                 if current_offer_count != len(self.previous_offer_prices):
-                    log(f"{current_offer_count} other offers found", self.product_name)
+                    log(f"{current_offer_count} other offers found", log_id)
 
                 if not offer_containers:
                     driver.refresh()
@@ -604,7 +606,7 @@ class pricesdrop_bot(threading.Thread):
                             condition_span = offer.find_element(by=By.XPATH, value=".//div[@id='aod-offer-heading']/span")
                             condition_text = condition_span.text.strip()
                         except NoSuchElementException:
-                            log(f"Could not find condition for an offer, skipping.", self.product_name)
+                            log(f"Could not find condition for an offer, skipping.", log_id)
                             continue
 
                         normalized_state = "unknown"
@@ -643,38 +645,38 @@ class pricesdrop_bot(threading.Thread):
 
                         if current_price < 0:
                             if price_changed:
-                                log(f"{log_message} - ERROR: unable to get {i}th offer's current price...")
+                                log(f"{log_message} - ERROR: unable to get {i}th offer's current price...", log_id)
                             continue
                             
                         if self.object_state and normalized_state not in self.object_state:
                             if price_changed:
-                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}")
+                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", log_id)
                             continue
 
                         if current_price <= self.cut_price:
                             if price_changed:
-                                log(f"{log_message} - ACCEPTED: Price is low enough.")
-                            shortlink = generate_shortlink(driver, self.asin, self.product_name)
+                                log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
+                            shortlink = generate_shortlink(driver, self.asin, log_id)
                             if not shortlink:
                                 shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", self.product_name, image_url=product_image_url)
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", image_url=product_image_url, log_id=log_id)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
                                 add_to_cart_button.click()
-                                log(f"!!! Just added to cart !!!", self.product_name)
+                                log(f"!!! Just added to cart !!!", log_id)
                             else:
                                 sleep(0.5)
                                 #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                                log(f"!!! Just bought !!!", self.product_name)
+                                log(f"!!! Just bought !!!", log_id)
                             
                             check = False
                             break
                         else:
                             if price_changed:
-                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})")
+                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", log_id)
                     except Exception as e:
-                        save_debug_html(driver, e, "other_offer", self.product_name, self.asin)
+                        save_debug_html(driver, e, "other_offer", self.asin, log_id)
 
                 self.previous_offer_prices = new_offer_prices
                 
@@ -685,7 +687,7 @@ class pricesdrop_bot(threading.Thread):
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 file_name = exc_tb.tb_frame.f_code.co_filename
                 line_number = exc_tb.tb_lineno
-                log(f"Error finding offers: {e} at file {file_name} line {line_number}")
+                log(f"Error finding offers: {e} at file {file_name} line {line_number}", log_id)
                 driver.refresh()
                 sleep(2 + random.uniform(0, 3))
             
