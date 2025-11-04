@@ -156,7 +156,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0{f'&tag={amazon_tag}' if amazon_tag else ''}"
+        product_url = f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={amazon_tag}"
         scraped_data = scrape_product_data(driver, product_url, asin, asin, amazon_tag)
 
         product_name = scraped_data["product_name"]
@@ -164,6 +164,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Could not retrieve product name for {asin}.")
             return
 
+        product_image_url = scraped_data["product_image_url"]
         price = scraped_data["main_current_price"]
         if price <= 0:
             await update.message.reply_text(f"Could not retrieve a valid price for {asin}.")
@@ -174,14 +175,15 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, product_name)
         if not shortlink:
-            await update.message.reply_text(f"Failed to generate shortlink for {asin}. The notification will be sent without it.")
+            shortlink = self.product_url # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         item_count_str = ""
         if item_count != 1:
             item_count_str = f", {item_count} pezzi"
         final_message = f"{product_name}{item_count_str} a {price:.2f}EUR\n{custom_message}\n{shortlink}"
-        send_telegram_notification(final_message, product_name)
+
+        send_telegram_notification(final_message, product_name, product_image_url)
         await update.message.reply_text("Post notification sent.")
 
     finally:
@@ -494,7 +496,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_offer_prices = []
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/?offerta_selezionata_da={bot_name}&aod=0{f'&tag={self.amazon_tag}' if self.amazon_tag else ''}"
+        self.product_url = f"https://{self.amazon_host}/dp/{self.asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={self.amazon_tag}"
         threading.Thread.__init__(self) 
 
     def run(self):
@@ -526,7 +528,7 @@ class pricesdrop_bot(threading.Thread):
                 if self.stop_event.is_set():
                     break
 
-                self.product_image_url = scraped_data["product_image_url"]
+                product_image_url = scraped_data["product_image_url"]
                 main_current_price = scraped_data["main_current_price"]
                 condition_text = scraped_data["condition_text"]
                 normalized_state = scraped_data["normalized_state"]
@@ -556,7 +558,7 @@ class pricesdrop_bot(threading.Thread):
                     shortlink = generate_shortlink(driver, self.asin, self.product_name)
                     if not shortlink:
                         shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", self.product_name, image_url=self.product_image_url)
+                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", self.product_name, image_url=product_image_url)
                     if not self.autocheckout:
                         main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
                         main_add_to_cart_button.click()
@@ -651,7 +653,7 @@ class pricesdrop_bot(threading.Thread):
                             shortlink = generate_shortlink(driver, self.asin, self.product_name)
                             if not shortlink:
                                 shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", self.product_name, image_url=self.product_image_url)
+                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", self.product_name, image_url=product_image_url)
                             
                             if not self.autocheckout:
                                 add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
@@ -811,7 +813,7 @@ bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
 amazon_host=os.getenv("AMAZON_HOST") or "www.amazon.it"
-amazon_tag=os.getenv("AMAZON_TAG") or None
+amazon_tag=os.getenv("AMAZON_TAG") or "pricesdrop-21"
 amazon_email=os.getenv("AMAZON_EMAIL")
 amazon_psw=os.getenv("AMAZON_PASSWORD")
 
