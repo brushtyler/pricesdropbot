@@ -199,13 +199,16 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asin = context.args[0]
+    options = context.args[1].split(',') if len(context.args) >= 2 else []
+    debug = "debug" in options
     log_id = f"/info {asin}"
 
     driver = None
     try:
         # Start a new driver session
         options = selenium.webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
+        if not debug:
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--window-size=1920,1080")
@@ -239,6 +242,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = scraped_data["main_current_price"]
         items_count = scraped_data["items_count"]
         product_brand_ai = scraped_data["product_brand_ai"]
+        product_name_ai = scraped_data["product_name_ai"]
         product_description_ai = scraped_data["product_description_ai"]
         product_items_count_ai = scraped_data["product_items_count_ai"]
         product_vendor_ai = scraped_data["product_vendor_ai"]
@@ -255,6 +259,7 @@ Product Information for ASIN: {asin}
 
 Rufus AI>
         Brand: {product_brand_ai}
+        Name: {product_name_ai}
         Description: {product_description_ai}
         Items Count: {product_items_count_ai}
         Vendor: {product_vendor_ai}
@@ -263,7 +268,7 @@ Rufus AI>
         Prime: {product_prime_ai}
 
 DOM>
-        Full Name: {product_name}
+        Full Title: {product_name}
         Items Count: {items_count}
         Price: {price:.2f} EUR
         Image URL: {product_image_url}
@@ -272,6 +277,9 @@ DOM>
         """
 
         await update.message.reply_text(message)
+
+        if debug:
+            sleep(60)
 
     finally:
         if driver:
@@ -396,24 +404,29 @@ def send_telegram_notification(message, image_url=None, log_id=None):
         log("Telegram bot token or chat ID not configured. Skipping notification.", log_id)
 
 
-def get_product_info_from_rufus(driver, log_id):
+def get_product_info_from_rufus(driver, log_id, asin):
     ai_product_data = {}
-
+    reply_sep = ' @@@@@@@@@ '
     request_mapping = {
         "brand" : "MARCA",
+        "name" : "NOME DEL PRODOTTO",
         "description" : "DESCRIZIONE BREVE",
         "items_count" : "NUMERO ARTICOLI",
         "vendor" :  "VENDITORE",
         "sender" :  "SPEDITORE",
-        "by_amazon" :  "VENDUTO E SPEDITO DA AMAZON",
+        "by_amazon" :  "VENDUTO E SPEDITO DA AMAZON SI/NO",
         "prime" : "DISPONIBILE CONSEGNA PRIME SI/NO"
     }
+    for info, query in request_mapping.items():
+        key = f"product_{info}_ai"
+        ai_product_data[key] = None
+
     list_expected_replies = []
     for info, query in request_mapping.items():
         reply_format = f"{info} : <{query}>"
         list_expected_replies += [reply_format]
 
-    full_request_query = f"rispondi con solo quello che ti chiedo e col formato '{' \n\n '.join(list_expected_replies)}' rimpiazzando <...> con i valori relativi al prodotto. Non aggiungere altro testo",
+    full_request_query = f"rispondi con solo quello che ti chiedo e col formato '{reply_sep.join(list_expected_replies)}' rimpiazzando <...> con i valori relativi al prodotto. Non aggiungere altro testo",
 
     try:
         log("Attempting to get info from RufusAI...", log_id)
@@ -433,43 +446,54 @@ def get_product_info_from_rufus(driver, log_id):
             ask_button.click()
             log("Clicked the 'ask-pill' button to open RufusAI.", log_id)
 
-        # Wait for the text area to be visible before write the queries
-        text_area = WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.ID, "rufus-text-area"))
-        )
+        attempts = 0
+        answer_text = ""
+        while reply_sep not in answer_text or answer_text.count(reply_sep) < len(request_mapping) - 1:
+            attempts += 1
+            if attempts > 3:
+                log(f"Could not get info from RufusAI: it's not replying or replying not in the requested format", log_id)
+                break;
 
-        text_area.send_keys(full_request_query)
+            # Wait for the text area to be visible before write the queries
+            text_area = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.ID, "rufus-text-area"))
+            )
 
-        # Click the submit button
-        submit_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "rufus-submit-button"))
-        )
-        submit_button.click()
+            text_area.send_keys(full_request_query)
 
-        sleep(2)
-        # Retrieve the answer
-        answer_element = WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]'))
-        )
-        WebDriverWait(driver, 10).until(
-            lambda driver: answer_element.get_attribute("aria-label") != ""
-        )
-        sleep(2)
-        answer_text = answer_element.get_attribute("aria-label")
-        log(f"RufusAI reply> {answer_text}", log_id)
+            # Click the submit button
+            submit_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "rufus-submit-button"))
+            )
+            submit_button.click()
+
+            # Wait for the answer element to be visible
+            WebDriverWait(driver, 15).until(
+                EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]'))
+            )
+            # Wait for the text to be fully populated
+            sleep(5)
+            # Retrieve the answer by re-finding the element
+            answer_text = driver.find_element(By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]').get_attribute("aria-label")
+            log(f"RufusAI reply (attempts #{attempts})> {answer_text}", log_id)
 
     except Exception as e:
+        save_debug_html(driver, e, "rufus_ai", asin, log_id)
         log(f"Could not get info from RufusAI: {e}", log_id)
+
     else:
-        for reply in answer_text.split(' \n\n '):
-            info, value = reply.split(' : ')
-            ai_product_data[f"product_{info}_ai"] = value
+        for reply in answer_text.split(reply_sep):
+            info, value = reply.split(' : ', 1)
+            key = f"product_{info}_ai"
+            ai_product_data[key] = value
 
     return ai_product_data
 
 def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=False):
     driver.get(product_url)
-    sleep(10 + random.uniform(0, 3))
+    WebDriverWait(driver, 30).until(
+        lambda driver: driver.execute_script("return document.readyState == 'complete'")
+    )
     handle_captcha(driver, log_id)
 
     scraped_data = {
@@ -582,7 +606,7 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
     ai_product_data = {}
     if use_rufus_ai:
         # Get product info from RufusAI
-        ai_product_data = get_product_info_from_rufus(driver, log_id)
+        ai_product_data = get_product_info_from_rufus(driver, log_id, asin)
 
     return scraped_data | ai_product_data
 
