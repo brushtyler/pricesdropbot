@@ -453,29 +453,30 @@ def get_product_info_from_rufus(driver, log_id, asin):
     full_request_query = f"rispondi con solo quello che ti chiedo e col formato '{reply_sep.join(list_expected_replies)}' rimpiazzando <...> con i valori relativi al prodotto. Non aggiungere altro testo",
 
     try:
-        log("Attempting to get info from RufusAI...", log_id)
+        #log("Attempting to get info from RufusAI...", log_id)
         
         try:
             # Check if the RufusAI panel is visible
             WebDriverWait(driver, 2).until(
                 EC.visibility_of_element_located((By.ID, "rufus-panel-header-minimize"))
             )
-            log("RufusAI panel is already visible.", log_id)
+            #log("RufusAI panel is already visible.", log_id)
         except:
             # If not visible, click the button to open it
-            log("RufusAI panel not visible, trying to open it.", log_id)
+            #log("RufusAI panel not visible, trying to open it.", log_id)
             ask_button = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//span[@data-action='dpx-rufus-connect']//button[contains(@class, 'ask-pill')]"))
             )
             ask_button.click()
-            log("Clicked the 'ask-pill' button to open RufusAI.", log_id)
+            #log("Clicked the 'ask-pill' button to open RufusAI.", log_id)
 
         attempts = 0
+        all_answer_texts = []
         answer_text = ""
         while reply_sep not in answer_text or answer_text.count(reply_sep) < len(request_mapping) - 1:
             attempts += 1
             if attempts > 3:
-                log(f"Could not get info from RufusAI: it's not replying or replying not in the requested format", log_id)
+                log(f"Could not get info from RufusAI! All replies follow:\n{'\n> '.join(all_answer_texts)}", log_id)
                 break;
 
             # Wait for the text area to be visible before write the queries
@@ -499,7 +500,9 @@ def get_product_info_from_rufus(driver, log_id, asin):
             sleep(5)
             # Retrieve the answer by re-finding the element
             answer_text = driver.find_element(By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]').get_attribute("aria-label")
-            log(f"RufusAI reply (attempts #{attempts})> {answer_text}", log_id)
+            #log(f"RufusAI reply (attempts #{attempts})> {answer_text}", log_id)
+
+            all_answer_texts += [answer_text]
 
     except Exception as e:
         save_debug_html(driver, e, "rufus_ai", asin, log_id)
