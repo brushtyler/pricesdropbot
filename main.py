@@ -23,6 +23,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+user_agent_string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+
 def log(message, product_name=None):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}]{f' [{product_name}]' if product_name else ''} {message}")
 
@@ -145,6 +147,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Start a new driver session
         options = selenium.webdriver.ChromeOptions()
+        options.add_argument(f"user-agent={user_agent_string}")
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -217,6 +220,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Start a new driver session
         options = selenium.webdriver.ChromeOptions()
+        options.add_argument(f"user-agent={user_agent_string}")
         if not debug:
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
@@ -717,6 +721,7 @@ class pricesdrop_bot(threading.Thread):
 
     def run(self):
         options = selenium.webdriver.ChromeOptions()
+        options.add_argument(f"user-agent={user_agent_string}")
         options.add_argument("--headless=new") # Always headless for monitoring
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -960,6 +965,7 @@ def amazon_monitor_main(monitoring_started_event):
     if os.path.exists(".cookies.pkl"):
         log("Cookies file found. Checking session validity...")
         check_options = selenium.webdriver.ChromeOptions()
+        check_options.add_argument(f"user-agent={user_agent_string}")
         check_options.add_argument("--no-sandbox")
         check_options.add_argument("--disable-dev-shm-usage")
         check_options.add_argument("--window-size=1920,1080")
@@ -987,6 +993,7 @@ def amazon_monitor_main(monitoring_started_event):
     if not os.path.exists(".cookies.pkl"):
         log("No cookies found. Performing login in non-headless mode...")
         login_options = selenium.webdriver.ChromeOptions()
+        login_options.add_argument(f"user-agent={user_agent_string}")
         login_options.add_argument("--no-sandbox")
         login_options.add_argument("--disable-dev-shm-usage")
         login_options.add_argument("--window-size=1920,1080")
