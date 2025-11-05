@@ -30,23 +30,33 @@ def log(message, product_name=None):
 ASK_ASIN, ASK_NAME, ASK_CUT_PRICE, ASK_AUTOCHECKOUT = range(4)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     await update.message.reply_text("Hello! I am your Prices Drop Bot. Use /add to add a product or /delete to remove one.")
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     await update.message.reply_text("Please send me the ASIN of the product you want to add.")
     return ASK_ASIN
 
 async def add_asin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     context.user_data['asin'] = update.message.text
     await update.message.reply_text("Please send me the name of the product.")
     return ASK_NAME
 
 async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     context.user_data['name'] = update.message.text
     await update.message.reply_text("Please send me the cut price (e.g., 100.50).")
     return ASK_CUT_PRICE
 
 async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     try:
         context.user_data['cut_price'] = float(update.message.text)
         await update.message.reply_text("Do you want to enable autocheckout for this product? (yes/no)")
@@ -56,6 +66,8 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_CUT_PRICE
 
 async def add_autocheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     autocheckout_str = update.message.text.lower()
     context.user_data['autocheckout'] = autocheckout_str == 'yes'
 
@@ -90,10 +102,14 @@ async def add_autocheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     if not context.args:
         await update.message.reply_text("Please provide the ASIN of the product to delete. Usage: /delete <ASIN>")
         return
@@ -125,6 +141,8 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Product with ASIN {asin_to_delete} not found in the monitoring list.")
 
 async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     if len(context.args) < 2:
         await update.message.reply_text("Usage: /post <ASIN> <message>")
         return
@@ -194,6 +212,8 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             driver.quit()
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     if not context.args:
         await update.message.reply_text("Usage: /info <ASIN>")
         return
@@ -286,6 +306,8 @@ DOM>
             driver.quit()
 
 async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     await update.message.reply_text("Reloading products from products.toml...")
     
     new_products_list = load_products_from_toml()
@@ -336,6 +358,8 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     if not active_threads:
         await update.message.reply_text("No products are currently being monitored.")
         return
