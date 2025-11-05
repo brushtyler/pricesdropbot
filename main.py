@@ -27,7 +27,7 @@ def log(message, product_name=None):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}]{f' [{product_name}]' if product_name else ''} {message}")
 
 # States for adding a product
-ASK_ASIN, ASK_NAME, ASK_CUT_PRICE, ASK_AUTOCHECKOUT = range(4)
+ASK_NAME, ASK_CUT_PRICE = range(2)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -37,13 +37,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    await update.message.reply_text("Please send me the ASIN of the product you want to add.")
-    return ASK_ASIN
-
-async def add_asin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    if not context.args:
+        await update.message.reply_text("Please provide the ASIN of the product to add. Usage: /add <ASIN>")
         return
-    context.user_data['asin'] = update.message.text
+    asin_to_add = context.args[0]
+    context.user_data['asin'] = asin_to_add
     await update.message.reply_text("Please send me the name of the product.")
     return ASK_NAME
 
@@ -59,23 +57,15 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         context.user_data['cut_price'] = float(update.message.text)
-        await update.message.reply_text("Do you want to enable autocheckout for this product? (yes/no)")
-        return ASK_AUTOCHECKOUT
     except ValueError:
         await update.message.reply_text("Invalid price. Please enter a number (e.g., 100.50).")
         return ASK_CUT_PRICE
-
-async def add_autocheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    autocheckout_str = update.message.text.lower()
-    context.user_data['autocheckout'] = autocheckout_str == 'yes'
 
     product_data = {
         "name": context.user_data['name'],
         "asin": context.user_data['asin'],
         "cut_price": context.user_data['cut_price'],
-        "autocheckout": context.user_data['autocheckout']
+        "autocheckout": False
     }
 
     # Update products.toml
@@ -382,10 +372,8 @@ def telegram_bot_main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", add_command)],
         states={
-            ASK_ASIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_asin)],
             ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
             ASK_CUT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_cut_price)],
-            ASK_AUTOCHECKOUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_autocheckout)],
         },
         fallbacks=[CommandHandler("cancel", cancel_command)],
     )
