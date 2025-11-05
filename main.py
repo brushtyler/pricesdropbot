@@ -173,7 +173,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Could not retrieve a valid price for {asin}.")
             return
 
-        item_count = scraped_data["item_count"]
+        items_count = scraped_data["items_count"]
 
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, log_id)
@@ -181,10 +181,10 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shortlink = product_url # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
-        item_count_str = ""
-        if item_count != 1:
-            item_count_str = f", {item_count} pezzi"
-        final_message = f"{product_name}{item_count_str} a {price:.2f}EUR\n{custom_message}\n{shortlink}"
+        items_count_str = ""
+        if items_count != 1:
+            items_count_str = f", {items_count} pezzi"
+        final_message = f"{product_name}{items_count_str} a {price:.2f}EUR\n{custom_message}\n{shortlink}"
 
         send_telegram_notification(final_message, image_url=product_image_url, log_id=log_id)
         await update.message.reply_text("Post notification sent.")
@@ -237,25 +237,38 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         product_image_url = scraped_data["product_image_url"]
         price = scraped_data["main_current_price"]
-        item_count = scraped_data["item_count"]
-        product_shortname_ai = scraped_data["product_shortname_ai"]
+        items_count = scraped_data["items_count"]
+        product_brand_ai = scraped_data["product_brand_ai"]
+        product_description_ai = scraped_data["product_description_ai"]
         product_items_count_ai = scraped_data["product_items_count_ai"]
+        product_vendor_ai = scraped_data["product_vendor_ai"]
+        product_sender_ai = scraped_data["product_sender_ai"]
+        product_by_amazon_ai = scraped_data["product_by_amazon_ai"]
+        product_prime_ai = scraped_data["product_prime_ai"]
 
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, log_id)
-        if not shortlink:
-            shortlink = product_url # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         message = f"""
-        Product Information for ASIN: {asin}
-        Name: {product_name}
-        Short Name (AI): {product_shortname_ai}
-        Item Count: {item_count}
-        Item Count (AI): {product_items_count_ai}
+Product Information for ASIN: {asin}
+
+Rufus AI>
+        Brand: {product_brand_ai}
+        Description: {product_description_ai}
+        Items Count: {product_items_count_ai}
+        Vendor: {product_vendor_ai}
+        Sender: {product_sender_ai}
+        By Amazon: {product_by_amazon_ai}
+        Prime: {product_prime_ai}
+
+DOM>
+        Full Name: {product_name}
+        Items Count: {items_count}
         Price: {price:.2f} EUR
         Image URL: {product_image_url}
-        Shortlink: {shortlink}
+        Full Link: {product_url}
+        Short Link: {shortlink or ''}
         """
 
         await update.message.reply_text(message)
@@ -384,81 +397,90 @@ def send_telegram_notification(message, image_url=None, log_id=None):
 
 
 def get_product_info_from_rufus(driver, log_id):
-    product_shortname_ai = ""
-    product_items_count_ai = ""
+    ai_product_data = {}
+
+    request_mapping = {
+        "brand" : "MARCA",
+        "description" : "DESCRIZIONE BREVE",
+        "items_count" : "NUMERO ARTICOLI",
+        "vendor" :  "VENDITORE",
+        "sender" :  "SPEDITORE",
+        "by_amazon" :  "VENDUTO E SPEDITO DA AMAZON",
+        "prime" : "DISPONIBILE CONSEGNA PRIME SI/NO"
+    }
+    list_expected_replies = []
+    for info, query in request_mapping.items():
+        reply_format = f"{info} : <{query}>"
+        list_expected_replies += [reply_format]
+
+    full_request_query = f"rispondi con solo quello che ti chiedo e col formato '{' \n\n '.join(list_expected_replies)}' rimpiazzando <...> con i valori relativi al prodotto. Non aggiungere altro testo",
+
     try:
         log("Attempting to get info from RufusAI...", log_id)
         
-        # Click the minimize button
-        minimize_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "rufus-panel-header-minimize"))
-        )
-        minimize_button.click()
-        log("Clicked RufusAI minimize button.", log_id)
+        try:
+            # Check if the RufusAI panel is visible
+            WebDriverWait(driver, 2).until(
+                EC.visibility_of_element_located((By.ID, "rufus-panel-header-minimize"))
+            )
+            log("RufusAI panel is already visible.", log_id)
+        except:
+            # If not visible, click the button to open it
+            log("RufusAI panel not visible, trying to open it.", log_id)
+            ask_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//span[@data-action='dpx-rufus-connect']//button[contains(@class, 'ask-pill')]"))
+            )
+            ask_button.click()
+            log("Clicked the 'ask-pill' button to open RufusAI.", log_id)
 
-        # Wait for the text area to be visible and write the first query
+        # Wait for the text area to be visible before write the queries
         text_area = WebDriverWait(driver, 10).until(
             EC.visibility_of_element_located((By.ID, "rufus-text-area"))
         )
-        text_area.send_keys("nome del prodotto abbreviato (risposta breve)")
-        log("Wrote first query to RufusAI.", log_id)
+
+        text_area.send_keys(full_request_query)
 
         # Click the submit button
         submit_button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.ID, "rufus-submit-button"))
         )
         submit_button.click()
-        log("Clicked RufusAI submit button for first query.", log_id)
 
+        sleep(2)
         # Retrieve the answer
         answer_element = WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]'))
+            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]'))
         )
-        product_shortname_ai = answer_element.text
-        log(f"Retrieved product_shortname_ai: {product_shortname_ai}", log_id)
-
-        # Clear the text area and write the second query
-        text_area.clear()
-        text_area.send_keys("numero di articoli del prodotto (risposta breve)")
-        log("Wrote second query to RufusAI.", log_id)
-
-        # Click the submit button again
-        submit_button.click()
-        log("Clicked RufusAI submit button for second query.", log_id)
-
-        # Retrieve the second answer
-        answer_element_2 = WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]'))
+        WebDriverWait(driver, 10).until(
+            lambda driver: answer_element.get_attribute("aria-label") != ""
         )
-        product_items_count_ai = answer_element_2.text
-        log(f"Retrieved product_items_count_ai: {product_items_count_ai}", log_id)
+        sleep(2)
+        answer_text = answer_element.get_attribute("aria-label")
+        log(f"RufusAI reply> {answer_text}", log_id)
 
     except Exception as e:
         log(f"Could not get info from RufusAI: {e}", log_id)
+    else:
+        for reply in answer_text.split(' \n\n '):
+            info, value = reply.split(' : ')
+            ai_product_data[f"product_{info}_ai"] = value
 
-    return product_shortname_ai, product_items_count_ai
+    return ai_product_data
 
 def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=False):
     driver.get(product_url)
     sleep(10 + random.uniform(0, 3))
     handle_captcha(driver, log_id)
 
-    product_shortname_ai = ""
-    product_items_count_ai = ""
-    if use_rufus_ai:
-        # Get product info from RufusAI
-        product_shortname_ai, product_items_count_ai = get_product_info_from_rufus(driver, log_id)
     scraped_data = {
         "product_name": "",
-        "item_count": 1,
+        "items_count": 1,
         "product_image_url": None,
         "main_current_price": -1.0,
         "condition_text": "N/A",
         "normalized_state": "unknown",
         "is_unavailable": False,
         "main_offer_container": None,
-        "product_shortname_ai": product_shortname_ai,
-        "product_items_count_ai": product_items_count_ai,
     }
 
     # Get product name
@@ -467,24 +489,24 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
     except Exception as e:
         log(f"Could not find product name: {e}", log_id)
 
-    # Retrieve item count
+    # Retrieve items count
     try:
-        item_count_xpaths = [
+        items_count_xpaths = [
             "//tr[contains(@class, 'po-number_of_items')]/td[2]/span",
             "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Numero di articoli')]]//span[@class='a-size-base a-color-tertiary']",
             "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Number of Items')]]//span[@class='a-size-base a-color-tertiary']",
             "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Numero di articoli')]/following-sibling::span",
             "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Number of Items')]/following-sibling::span"
         ]
-        for xpath in item_count_xpaths:
+        for xpath in items_count_xpaths:
             try:
-                item_count_element = driver.find_element(by=By.XPATH, value=xpath)
-                scraped_data["item_count"] = int(item_count_element.text)
+                items_count_element = driver.find_element(by=By.XPATH, value=xpath)
+                scraped_data["items_count"] = int(items_count_element.text)
                 break  # if found, break the loop
             except (NoSuchElementException, ValueError):
                 continue  # if not found, try the next xpath
     except Exception as e:
-        log(f"Could not find or parse item count: {e}", log_id)
+        log(f"Could not find or parse items count: {e}", log_id)
     
     # Try to find the product image URL
     try:
@@ -557,7 +579,12 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
             line_number = exc_tb.tb_lineno
             log(f"An unexpected error occurred while processing the main offer: {e} at file {file_name} line {line_number}", log_id)
 
-    return scraped_data
+    ai_product_data = {}
+    if use_rufus_ai:
+        # Get product info from RufusAI
+        ai_product_data = get_product_info_from_rufus(driver, log_id)
+
+    return scraped_data | ai_product_data
 
 def find_element_by_multiple_xpaths(driver, xpaths, description="element"):
     for xpath in xpaths:
@@ -610,9 +637,19 @@ def generate_shortlink(driver, asin, log_id):
         get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
         get_link_button.click()
         log(f"Clicked 'amzn-ss-get-link-button' for {asin}", log_id)
-        sleep(2)
-        shortlink_textarea = driver.find_element(by=By.ID, value="amzn-ss-text-shortlink-textarea")
-        shortlink = shortlink_textarea.text
+
+        # Wait for the textarea to be populated
+        wait = WebDriverWait(driver, 10)
+        shortlink_textarea = wait.until(
+            EC.presence_of_element_located((By.ID, "amzn-ss-text-shortlink-textarea"))
+        )
+
+        # Additional wait to ensure the value is not empty
+        wait.until(
+            lambda driver: shortlink_textarea.get_attribute("value") != ""
+        )
+
+        shortlink = shortlink_textarea.get_attribute("value")
         log(f"Generated shortlink for {asin}: {shortlink}", log_id)
     except Exception as e:
         log(f"Failed to generate shortlink for {asin}: {e}", log_id)
