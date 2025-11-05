@@ -299,6 +299,82 @@ DOM>
         if driver:
             driver.quit()
 
+async def offers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /offers <ASIN>")
+        return
+
+    asin = context.args[0]
+    options = context.args[1].split(',') if len(context.args) >= 2 else []
+    debug = "debug" in options
+    log_id = f"/offers {asin}"
+
+    driver = None
+    try:
+        # Start a new driver session
+        options = selenium.webdriver.ChromeOptions()
+        options.add_argument(f"user-agent={user_agent_string}")
+        if not debug:
+            options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+        driver = selenium.webdriver.Chrome(options=options)
+
+        # Load cookies to be logged in
+        if not os.path.exists(".cookies.pkl"):
+            await update.message.reply_text("Cookies file not found. Cannot proceed without being logged in.")
+            return
+            
+        driver.get(f"https://{amazon_host}/")
+        with open(".cookies.pkl", "rb") as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                if 'domain' in cookie:
+                    del cookie['domain']
+                driver.add_cookie(cookie)
+
+        # First, navigate to the standard product page
+        product_url = get_product_url(asin, amazon_tag)
+        driver.get(product_url)
+        WebDriverWait(driver, 30).until(
+            lambda d: d.execute_script("return document.readyState == 'complete'")
+        )
+        
+        # Add a small delay to mimic human behavior
+        sleep(2 + random.uniform(0, 3))
+
+        # Now, get all offers from the AOD page
+        offers = get_all_offers(driver, asin, log_id)
+
+        if not offers:
+            await update.message.reply_text(f"No offers found for ASIN {asin}.")
+            return
+
+        # Format the message
+        message = f"Offers for ASIN: {asin}\n\n"
+        for offer in offers:
+            price = offer.get('price')
+            if isinstance(price, float):
+                message += f"- Price: {price:.2f} EUR\n"
+            else:
+                message += f"- Price: {price or 'N/A'}\n"
+            
+            message += f"  Condition: {offer.get('condition', 'N/A')}\n"
+            message += f"  Sold by: {offer.get('sold_by', 'N/A')}\n"
+            message += f"  Ships from: {offer.get('ships_from', 'N/A')}\n"
+            if offer.get('is_pinned'):
+                message += "  (Pinned Offer)\n"
+            message += "\n"
+
+        await update.message.reply_text(message)
+
+    finally:
+        if driver:
+            driver.quit()
+
+
 async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -386,6 +462,7 @@ def telegram_bot_main():
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("post", post_command))
     application.add_handler(CommandHandler("info", info_command))
+    application.add_handler(CommandHandler("offers", offers_command))
     application.add_handler(CommandHandler("reload", reload_command))
 
     log("Telegram bot started polling...")
@@ -507,6 +584,88 @@ def get_product_info_from_rufus(driver, log_id, asin):
             ai_product_data[key] = value
 
     return ai_product_data
+
+def get_all_offers(driver, asin, log_id):
+    """
+    Fetches and parses all offers for a given ASIN from the All Offers Display page.
+    """
+    log(f"Getting all offers for {asin} from AOD page.", log_id)
+    aod_url = f"https://{amazon_host}/gp/product/ajax/aodAjaxMain?asin={asin}&pc=dp"
+    driver.get(aod_url)
+    WebDriverWait(driver, 30).until(
+        lambda d: d.execute_script("return document.readyState == 'complete'")
+    )
+
+    offers = []
+
+    def parse_offer(offer_element):
+        offer_data = {}
+        try:
+            price_whole_str = offer_element.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+            try:
+                price_fraction_str = offer_element.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                offer_data['price'] = float(f"{price_whole_str}.{price_fraction_str}")
+            except NoSuchElementException:
+                offer_data['price'] = float(price_whole_str)
+
+            try:
+                offer_data['condition'] = offer_element.find_element(By.XPATH, ".//div[@id='aod-offer-heading']//span").text.strip()
+            except NoSuchElementException:
+                offer_data['condition'] = "N/A"
+            
+            offer_data['sold_by'] = "N/A"
+            try:
+                sold_by_element = offer_element.find_element(By.XPATH, ".//div[@id='aod-offer-soldBy']//a")
+                offer_data['sold_by'] = sold_by_element.text.strip()
+            except NoSuchElementException:
+                pass
+
+            offer_data['ships_from'] = "N/A"
+            try:
+                ships_from_element = offer_element.find_element(By.XPATH, ".//div[@id='aod-offer-shipsFrom']//span[@class='a-size-small a-color-base']")
+                offer_data['ships_from'] = ships_from_element.text.strip()
+            except NoSuchElementException:
+                pass
+
+        except Exception as e:
+            log(f"Error parsing an offer: {e}", log_id)
+            return None
+        return offer_data
+
+    # Pinned/Main offer
+    try:
+        pinned_offer_element = driver.find_element(By.ID, "aod-pinned-offer")
+        
+        # Click "See more" to reveal seller and shipper info
+        try:
+            see_more_link = pinned_offer_element.find_element(By.ID, "aod-pinned-offer-show-more-link")
+            see_more_link.click()
+            WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.ID, "aod-pinned-offer-additional-content"))
+            )
+        except NoSuchElementException:
+            pass # If "See more" is not present, continue
+
+        pinned_offer_data = parse_offer(pinned_offer_element)
+        if pinned_offer_data:
+            pinned_offer_data['is_pinned'] = True
+            offers.append(pinned_offer_data)
+    except NoSuchElementException as e:
+        log("No pinned offer found on AOD page.", log_id)
+        save_debug_html(driver, e, "pinned_offer_not_found", asin, log_id)
+
+    # Other offers
+    try:
+        offer_elements = driver.find_elements(By.XPATH, "//div[@id='aod-offer-list']//div[contains(@class, 'aod-information-block') and @role='listitem']")
+        for offer_element in offer_elements:
+            offer_data = parse_offer(offer_element)
+            if offer_data:
+                offer_data['is_pinned'] = False
+                offers.append(offer_data)
+    except NoSuchElementException:
+        log("No other offers found on AOD page.", log_id)
+
+    return offers
 
 def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=False):
     driver.get(product_url)
