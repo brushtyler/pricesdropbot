@@ -442,6 +442,44 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autocheckout: {autocheckout})\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
+async def last_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text("Please provide the ASIN of the product. Usage: /last <ASIN>")
+        return
+
+    asin = context.args[0]
+    if asin not in active_threads:
+        await update.message.reply_text(f"Product with ASIN {asin} is not currently being monitored.")
+        return
+
+    thread_info = active_threads[asin]
+    monitor_thread = thread_info['thread']
+
+    last_price = monitor_thread.last_price
+    last_check_time = monitor_thread.last_check_time
+    price_history = monitor_thread.price_history
+
+    if not price_history:
+        message = f"No price history available for ASIN {asin}."
+    else:
+        avg_price = sum(price_history) / len(price_history)
+        max_price = max(price_history)
+        min_price = min(price_history)
+
+        message = f"<b>Last monitoring data for {monitor_thread.product_name} (ASIN: {asin}):</b>\n"
+        message += f"Last Price: {last_price:.2f} EUR\n"
+        message += f"Average Price: {avg_price:.2f} EUR\n"
+        message += f"Max Price: {max_price:.2f} EUR\n"
+        message += f"Min Price: {min_price:.2f} EUR\n"
+        if last_check_time:
+            message += f"Last Checked: {last_check_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (UTC) \n" # Assuming UTC for now, can be adjusted if needed
+        else:
+            message += f"Last Checked: N/A (not yet monitored)\n"
+
+    await update.message.reply_text(message, parse_mode="HTML")
+
 
 def telegram_bot_main():
     application = Application.builder().token(bot_token).build()
@@ -464,6 +502,7 @@ def telegram_bot_main():
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("offers", offers_command))
     application.add_handler(CommandHandler("reload", reload_command))
+    application.add_handler(CommandHandler("last", last_command))
 
     log("Telegram bot started polling...")
     application.run_polling()
@@ -876,6 +915,9 @@ class pricesdrop_bot(threading.Thread):
         self.previous_main_offer_xpath = None
         self.stop_event = stop_event
         self.product_url = get_product_url(self.asin, self.amazon_tag)
+        self.last_price = None
+        self.last_check_time = None
+        self.price_history = []
         threading.Thread.__init__(self) 
 
     def run(self):
@@ -910,8 +952,14 @@ class pricesdrop_bot(threading.Thread):
                 if self.stop_event.is_set():
                     break
 
-                product_image_url = scraped_data["product_image_url"]
+                self.last_check_time = datetime.now()
                 main_current_price = scraped_data["main_current_price"]
+                if main_current_price > 0:
+                    if self.last_price is None or main_current_price != self.last_price:
+                        self.last_price = main_current_price
+                        self.price_history.append(main_current_price)
+
+                product_image_url = scraped_data["product_image_url"]
                 condition_text = scraped_data["condition_text"]
                 normalized_state = scraped_data["normalized_state"]
                 main_offer_container = scraped_data["main_offer_container"] # Keep for add to cart button
