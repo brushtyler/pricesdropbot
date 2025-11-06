@@ -264,9 +264,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_by_amazon_ai = scraped_data["product_by_amazon_ai"]
         product_prime_ai = scraped_data["product_prime_ai"]
 
-        # Generate Shortlink
-        shortlink = generate_shortlink(driver, asin, log_id)
-
         # Construct and send message
         message = f"""
 Product Information for ASIN: {asin}
@@ -287,7 +284,6 @@ DOM>
         Price: {price:.2f} EUR
         Image URL: {product_image_url}
         Full Link: {product_url}
-        Short Link: {shortlink or ''}
         """
 
         await update.message.reply_text(message)
