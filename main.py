@@ -259,8 +259,8 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_name_ai = scraped_data["product_name_ai"]
         product_description_ai = scraped_data["product_description_ai"]
         product_items_count_ai = scraped_data["product_items_count_ai"]
-        product_vendor_ai = scraped_data["product_vendor_ai"]
-        product_sender_ai = scraped_data["product_sender_ai"]
+        product_sold_by_ai = scraped_data["product_sold_by_ai"]
+        product_ships_from_ai = scraped_data["product_ships_from_ai"]
         product_by_amazon_ai = scraped_data["product_by_amazon_ai"]
         product_prime_ai = scraped_data["product_prime_ai"]
 
@@ -276,8 +276,8 @@ Rufus AI>
         Name: {product_name_ai}
         Description: {product_description_ai}
         Items Count: {product_items_count_ai}
-        Vendor: {product_vendor_ai}
-        Sender: {product_sender_ai}
+        Sold By: {product_sold_by_ai}
+        Ships From: {product_ships_from_ai}
         By Amazon: {product_by_amazon_ai}
         Prime: {product_prime_ai}
 
@@ -505,10 +505,10 @@ def get_product_info_from_rufus(driver, log_id, asin):
         "name" : "NOME DEL PRODOTTO",
         "description" : "DESCRIZIONE BREVE",
         "items_count" : "NUMERO ARTICOLI",
-        "vendor" :  "VENDITORE",
-        "sender" :  "SPEDITORE",
-        "by_amazon" :  "VENDUTO E SPEDITO DA AMAZON SI/NO",
-        "prime" : "DISPONIBILE CONSEGNA PRIME SI/NO"
+        "sold_by" :  "VENDUTO DA",
+        "ships_from" :  "SPEDITO DA",
+        "by_amazon" :  "VENDUTO E SPEDITO DA AMAZON YES/NO",
+        "prime" : "DISPONIBILE CONSEGNA PRIME YES/NO"
     }
     for info, query in request_mapping.items():
         key = f"product_{info}_ai"
