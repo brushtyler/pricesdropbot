@@ -2,6 +2,7 @@
 
 import platform
 import subprocess
+import re
 
 import selenium
 from selenium.webdriver.common.by import By
@@ -67,6 +68,7 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "name": context.user_data['name'],
         "asin": context.user_data['asin'],
         "cut_price": context.user_data['cut_price'],
+        "autoaddtocart": False,
         "autocheckout": False
     }
 
@@ -81,6 +83,7 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     products_toml[product_data['name']] = {
         "asin": product_data['asin'],
         "cut_price": product_data['cut_price'],
+        "autoaddtocart": product_data['autoaddtocart'],
         "autocheckout": product_data['autocheckout']
     }
 
@@ -435,7 +438,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_name = thread_info['thread'].product_name
         cut_price = thread_info['thread'].cut_price
         autocheckout = thread_info['thread'].autocheckout
-        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autocheckout: {autocheckout})\n"
+        autoaddtocart = thread_info['thread'].autoaddtocart
+        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout})\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
 async def last_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -714,6 +718,7 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
         "items_count": 1,
         "product_image_url": None,
         "main_current_price": -1.0,
+        "delivery_cost": None,
         "condition_text": "N/A",
         "normalized_state": "unknown",
         "is_unavailable": False,
@@ -762,6 +767,24 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
                 continue
     except Exception as e:
         log(f"Could not find product image: {e}", log_id)
+
+    # Try to find the delivery cost
+    try:
+        delivery_cost_element = driver.find_element(by=By.XPATH, value="//div[@id='deliveryBlockMessage']//span[@data-csa-c-delivery-price]")
+        delivery_cost_str = delivery_cost_element.get_attribute('data-csa-c-delivery-price')
+        if delivery_cost_str:
+            normalized_delivery_cost_str = delivery_cost_str.lower()
+            if "senza costi aggiuntivi" in normalized_delivery_cost_str or "free" in normalized_delivery_cost_str:
+                scraped_data["delivery_cost"] = 0.0
+            else:
+                match = re.search(r'(\d+,\d{2})', delivery_cost_str)
+                if match:
+                    cost_str = match.group(1).replace(',', '.')
+                    scraped_data["delivery_cost"] = float(cost_str)
+    except NoSuchElementException:
+        pass # Delivery block is optional, so no error if not found
+    except Exception as e:
+        log(f"Could not parse delivery cost: {e}", log_id)
 
     # Check for product unavailability
     try:
@@ -903,6 +926,7 @@ class pricesdrop_bot(threading.Thread):
         self.product_name=product["name"]
         self.asin=product["asin"]
         self.cut_price=product["cut_price"]
+        self.autoaddtocart=product.get("autoaddtocart", False)
         self.autocheckout=product.get("autocheckout", False)
         object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
@@ -959,6 +983,7 @@ class pricesdrop_bot(threading.Thread):
                 condition_text = scraped_data["condition_text"]
                 normalized_state = scraped_data["normalized_state"]
                 main_offer_container = scraped_data["main_offer_container"] # Keep for add to cart button
+                delivery_cost = scraped_data["delivery_cost"]
 
                 price_changed = main_current_price != self.previous_main_price
 
@@ -981,20 +1006,28 @@ class pricesdrop_bot(threading.Thread):
                 elif main_current_price <= self.cut_price:
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
-                    shortlink = generate_shortlink(driver, self.asin, log_id)
-                    if not shortlink:
-                        shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                    send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {main_current_price:.2f}! Link: {shortlink}", image_url=product_image_url, log_id=log_id)
-                    if not self.autocheckout:
-                        main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
-                        main_add_to_cart_button.click()
-                        log(f"!!! Just added to cart !!!", log_id)
-                    else:
-                        #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                        sleep(0.5)
-                        #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
-                        #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                        log(f"!!! Just bought !!!", log_id)
+
+                        shortlink = generate_shortlink(driver, self.asin, log_id)
+                        if not shortlink:
+                            shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+                    
+                        message = f"{self.product_name} ({self.asin})"
+                        message += f"\n📉 Il prezzo è crollato: {main_current_price:.2f} EUR!"
+                        if delivery_cost is not None:
+                            message += f"\n🚚 Consegna: {delivery_cost:.2f} EUR"
+                        message += f"\nLink: {shortlink}"
+                        send_telegram_notification(message, image_url=product_image_url, log_id=log_id)
+
+                        if self.autoaddtocart and not self.autocheckout:
+                            main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                            main_add_to_cart_button.click()
+                            log(f"!!! Just added to cart !!!", log_id)
+                        elif self.autoaddtocart and self.autocheckout:
+                            #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
+                            sleep(0.5)
+                            #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
+                            #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
+                            log(f"!!! Just bought !!!", log_id)
                     
                 else:
                     if price_changed:
@@ -1076,21 +1109,26 @@ class pricesdrop_bot(threading.Thread):
                         if current_price <= self.cut_price:
                             if price_changed:
                                 log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
-                            shortlink = generate_shortlink(driver, self.asin, log_id)
-                            if not shortlink:
-                                shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                            send_telegram_notification(f"{self.product_name} ({self.asin}) price is dropped to {current_price:.2f}! Link: {shortlink}", image_url=product_image_url, log_id=log_id)
+
+                                shortlink = generate_shortlink(driver, self.asin, log_id)
+                                if not shortlink:
+                                    shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+                                message = f"{self.product_name} ({self.asin})"
+                                message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
+                                #if delivery_cost is not None:
+                                #    message += f"\n🚚 Consegna: {delivery_cost:.2f} EUR"
+                                message += f"\nLink: {shortlink}"
+                                send_telegram_notification(message, image_url=product_image_url, log_id=log_id)
                             
-                            if not self.autocheckout:
-                                add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
-                                add_to_cart_button.click()
-                                log(f"!!! Just added to cart !!!", log_id)
-                            else:
-                                sleep(0.5)
-                                #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                                log(f"!!! Just bought !!!", log_id)
+                                if self.autoaddtocart and not self.autocheckout:
+                                    add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
+                                    add_to_cart_button.click()
+                                    log(f"!!! Just added to cart !!!", log_id)
+                                elif self.autoaddtocart and self.autocheckout:
+                                    sleep(0.5)
+                                    #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
+                                    log(f"!!! Just bought !!!", log_id)
                             
-                            check = False
                             break
                         else:
                             if price_changed:
