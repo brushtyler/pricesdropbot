@@ -464,19 +464,19 @@ async def last_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not price_history:
         message = f"No price history available for ASIN {asin}."
     else:
-        avg_price = sum(price_history) / len(price_history)
-        max_price = max(price_history)
-        min_price = min(price_history)
+        # price_history is a list of tuples, so we need to extract the prices for calculations
+        prices = [item[0] for item in price_history]
+        avg_price = sum(prices) / len(prices)
+
+        # Find min and max with their timestamps
+        min_price_tuple = min(price_history, key=lambda item: item[0])
+        max_price_tuple = max(price_history, key=lambda item: item[0])
 
         message = f"<b>Last monitoring data for {monitor_thread.product_name} (ASIN: {asin}):</b>\n"
-        message += f"Last Price: {last_price:.2f} EUR\n"
+        message += f"Last Price: {last_price:.2f} EUR on {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        message += f"Max Price: {max_price_tuple[0]:.2f} EUR on {max_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
+        message += f"Min Price: {min_price_tuple[0]:.2f} EUR on {min_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"Average Price: {avg_price:.2f} EUR\n"
-        message += f"Max Price: {max_price:.2f} EUR\n"
-        message += f"Min Price: {min_price:.2f} EUR\n"
-        if last_check_time:
-            message += f"Last Checked: {last_check_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} (UTC) \n" # Assuming UTC for now, can be adjusted if needed
-        else:
-            message += f"Last Checked: N/A (not yet monitored)\n"
 
     await update.message.reply_text(message, parse_mode="HTML")
 
@@ -976,7 +976,7 @@ class pricesdrop_bot(threading.Thread):
                 if current_price > 0:
                     if self.last_price is None or current_price != self.last_price:
                         self.last_price = current_price
-                        self.price_history.append(current_price)
+                        self.price_history.append((current_price, self.last_check_time))
 
                 product_image_url = scraped_data["product_image_url"]
                 condition_text = scraped_data["condition_text"]
