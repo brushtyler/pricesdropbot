@@ -3,6 +3,7 @@
 import platform
 import subprocess
 import re
+import json
 
 import selenium
 from selenium.webdriver.common.by import By
@@ -937,7 +938,27 @@ class pricesdrop_bot(threading.Thread):
         self.last_price = None
         self.last_check_time = None
         self.price_history = []
+        self.history_file_path = os.path.join("data", f"{self.asin}_price_history.json")
+
+        # Load price history from file if it exists
+        if os.path.exists(self.history_file_path):
+            try:
+                with open(self.history_file_path, 'r', encoding='utf-8') as f:
+                    loaded_history = json.load(f)
+                    # Convert timestamps back to datetime objects
+                    self.price_history = [(item[0], datetime.fromisoformat(item[1])) for item in loaded_history]
+                    if self.price_history:
+                        self.last_price = self.price_history[-1][0]
+                        self.last_check_time = self.price_history[-1][1]
+            except Exception as e:
+                log(f"Error loading price history for {self.asin}: {e}", self.product_name)
         threading.Thread.__init__(self) 
+
+    def _save_price_history(self):
+        # Convert datetime objects to ISO format strings for JSON serialization
+        serializable_history = [(item[0], item[1].isoformat()) for item in self.price_history]
+        with open(self.history_file_path, 'w', encoding='utf-8') as f:
+            json.dump(serializable_history, f, indent=4) 
 
     def run(self):
         options = selenium.webdriver.ChromeOptions()
@@ -977,6 +998,7 @@ class pricesdrop_bot(threading.Thread):
                     if self.last_price is None or current_price != self.last_price:
                         self.last_price = current_price
                         self.price_history.append((current_price, self.last_check_time))
+                        self._save_price_history()
 
                 product_image_url = scraped_data["product_image_url"]
                 condition_text = scraped_data["condition_text"]
@@ -1161,6 +1183,10 @@ def amazon_monitor_main(monitoring_started_event):
     products = load_products_from_toml()
     if products is None:
         sys.exit()
+
+    # Create data directory if it doesn't exist
+    if not os.path.exists("data"):
+        os.makedirs("data")
 
     for item in products:
         log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")

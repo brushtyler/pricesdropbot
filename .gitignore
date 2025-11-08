@@ -4,4 +4,5 @@ telegram_bot_token
 products.toml
 .cookies.pkl
 .env
+data/
 
