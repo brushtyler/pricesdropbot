@@ -207,17 +207,17 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if driver:
             driver.quit()
 
-async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     if not context.args:
-        await update.message.reply_text("Usage: /info <ASIN>")
+        await update.message.reply_text("Usage: /get <ASIN>")
         return
 
     asin = context.args[0]
     options = context.args[1].split(',') if len(context.args) >= 2 else []
     debug = "debug" in options
-    log_id = f"/info {asin}"
+    log_id = f"/get {asin}"
 
     driver = None
     try:
@@ -442,11 +442,11 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout})\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
-async def last_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     if not context.args:
-        await update.message.reply_text("Please provide the ASIN of the product. Usage: /last <ASIN>")
+        await update.message.reply_text("Please provide the ASIN of the product. Usage: /info <ASIN>")
         return
 
     asin = context.args[0]
@@ -472,7 +472,7 @@ async def last_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         min_price_tuple = min(price_history, key=lambda item: item[0])
         max_price_tuple = max(price_history, key=lambda item: item[0])
 
-        message = f"<b>Last monitoring data for {monitor_thread.product_name} (ASIN: {asin}):</b>\n"
+        message = f"<b>Monitoring data for {monitor_thread.product_name} (ASIN: {asin}):</b>\n"
         message += f"Last Price: {last_price:.2f} EUR on {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"Max Price: {max_price_tuple[0]:.2f} EUR on {max_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"Min Price: {min_price_tuple[0]:.2f} EUR on {min_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -499,10 +499,10 @@ def telegram_bot_main():
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("post", post_command))
-    application.add_handler(CommandHandler("info", info_command))
+    application.add_handler(CommandHandler("get", get_command))
     application.add_handler(CommandHandler("offers", offers_command))
     application.add_handler(CommandHandler("reload", reload_command))
-    application.add_handler(CommandHandler("last", last_command))
+    application.add_handler(CommandHandler("info", info_command))
 
     log("Telegram bot started polling...")
     application.run_polling()
