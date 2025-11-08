@@ -182,7 +182,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         product_image_url = scraped_data["product_image_url"]
-        price = scraped_data["main_current_price"]
+        price = scraped_data["current_price"]
         if price <= 0:
             await update.message.reply_text(f"Could not retrieve a valid price for {asin}.")
             return
@@ -256,7 +256,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         product_image_url = scraped_data["product_image_url"]
-        price = scraped_data["main_current_price"]
+        price = scraped_data["current_price"]
         items_count = scraped_data["items_count"]
         product_brand_ai = scraped_data["product_brand_ai"]
         product_name_ai = scraped_data["product_name_ai"]
@@ -671,7 +671,7 @@ def get_all_offers(driver, asin, log_id):
             return None
         return offer_data
 
-    # Pinned/Main offer
+    # Pinned offer
     try:
         pinned_offer_element = driver.find_element(By.ID, "aod-pinned-offer")
         
@@ -717,12 +717,12 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
         "product_name": "",
         "items_count": 1,
         "product_image_url": None,
-        "main_current_price": -1.0,
+        "current_price": -1.0,
         "delivery_cost": None,
         "condition_text": "N/A",
         "normalized_state": "unknown",
         "is_unavailable": False,
-        "main_offer_container": None,
+        "offer_container": None,
     }
 
     # Get product name
@@ -733,14 +733,14 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
 
     # Retrieve items count
     try:
-        items_count_xpaths = [
+        ITEMS_COUNT_XPATHS = [
             "//tr[contains(@class, 'po-number_of_items')]/td[2]/span",
             "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Numero di articoli')]]//span[@class='a-size-base a-color-tertiary']",
             "//div[contains(@data-feature-name, 'metaData') and .//span[contains(text(), 'Number of Items')]]//span[@class='a-size-base a-color-tertiary']",
             "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Numero di articoli')]/following-sibling::span",
             "//div[@id='detailBullets_feature_div']//span[contains(text(), 'Number of Items')]/following-sibling::span"
         ]
-        for xpath in items_count_xpaths:
+        for xpath in ITEMS_COUNT_XPATHS:
             try:
                 items_count_element = driver.find_element(by=By.XPATH, value=xpath)
                 scraped_data["items_count"] = int(items_count_element.text)
@@ -752,12 +752,12 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
     
     # Try to find the product image URL
     try:
-        image_xpaths = [
+        IMAGE_XPATHS = [
             "//img[@id='landingImage']",
             "//img[@id='imgBlkFront']",
             "//div[contains(@class, 'imgTagWrapper')]/img"
         ]
-        for xpath in image_xpaths:
+        for xpath in IMAGE_XPATHS:
             try:
                 image_element = driver.find_element(by=By.XPATH, value=xpath)
                 scraped_data["product_image_url"] = image_element.get_attribute('src')
@@ -791,7 +791,7 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
         unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
         if unavailable_element:
             scraped_data["is_unavailable"] = True
-            scraped_data["main_current_price"] = -1.0
+            scraped_data["current_price"] = -1.0
     except NoSuchElementException:
         pass
 
@@ -808,19 +808,19 @@ def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus
                 "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]",
                 "//div[@id='desktop_qualifiedBuyBox']"
             ]
-            main_offer_container, _ = find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container")
-            scraped_data["main_offer_container"] = main_offer_container
+            offer_container, _ = find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container")
+            scraped_data["offer_container"] = offer_container
 
-            price_whole_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
+            price_whole_str = offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
             try:
-                price_fraction_str = main_offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
-                scraped_data["main_current_price"] = float(f"{price_whole_str}.{price_fraction_str}")
+                price_fraction_str = offer_container.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
+                scraped_data["current_price"] = float(f"{price_whole_str}.{price_fraction_str}")
             except NoSuchElementException:
-                scraped_data["main_current_price"] = float(price_whole_str)
+                scraped_data["current_price"] = float(price_whole_str)
 
             scraped_data["condition_text"] = "New"
             try:
-                used_element = main_offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
+                used_element = offer_container.find_element(by=By.XPATH, value=".//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'usato')] | .//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'used')] ")
                 if used_element:
                     scraped_data["condition_text"] = used_element.text.strip()
             except NoSuchElementException:
@@ -930,9 +930,8 @@ class pricesdrop_bot(threading.Thread):
         self.autocheckout=product.get("autocheckout", False)
         object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
-        self.previous_main_price = 0.0
-        self.previous_offer_prices = []
-        self.previous_main_offer_xpath = None
+        self.previous_price = 0.0
+        self.previous_offer_xpath = None
         self.stop_event = stop_event
         self.product_url = get_product_url(self.asin, self.amazon_tag)
         self.last_price = None
@@ -973,37 +972,37 @@ class pricesdrop_bot(threading.Thread):
                     break
 
                 self.last_check_time = datetime.now()
-                main_current_price = scraped_data["main_current_price"]
-                if main_current_price > 0:
-                    if self.last_price is None or main_current_price != self.last_price:
-                        self.last_price = main_current_price
-                        self.price_history.append(main_current_price)
+                current_price = scraped_data["current_price"]
+                if current_price > 0:
+                    if self.last_price is None or current_price != self.last_price:
+                        self.last_price = current_price
+                        self.price_history.append(current_price)
 
                 product_image_url = scraped_data["product_image_url"]
                 condition_text = scraped_data["condition_text"]
                 normalized_state = scraped_data["normalized_state"]
-                main_offer_container = scraped_data["main_offer_container"] # Keep for add to cart button
+                offer_container = scraped_data["offer_container"] # Keep for add to cart button
                 delivery_cost = scraped_data["delivery_cost"]
 
-                price_changed = main_current_price != self.previous_main_price
+                price_changed = current_price != self.previous_price
 
-                if main_current_price == -1.0:
-                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: UNAVAILABLE"
-                elif main_current_price is None:
-                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: ERROR_GETTING_PRICE"
+                if current_price == -1.0:
+                    log_message = f"Monitored offer state: '{condition_text}' (normalized: '{normalized_state}'), price: UNAVAILABLE"
+                elif current_price is None:
+                    log_message = f"Monitored offer state: '{condition_text}' (normalized: '{normalized_state}'), price: ERROR_GETTING_PRICE"
                 else:
-                    log_message = f"Main offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {main_current_price:.2f}"
+                    log_message = f"Monitored offer state: '{condition_text}' (normalized: '{normalized_state}'), price: {current_price:.2f}"
 
-                if main_current_price == -1.0:
+                if current_price == -1.0:
                     if price_changed:
                         log(f"{log_message}", log_id)
-                elif main_current_price is None:
+                elif current_price is None:
                     if price_changed:
                         log(f"{log_message} - ERROR: unable to get main offer's current price...", log_id)
                 elif self.object_state and normalized_state not in self.object_state:
                     if price_changed:
                         log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", log_id)
-                elif main_current_price <= self.cut_price:
+                elif current_price <= self.cut_price:
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
 
@@ -1012,15 +1011,15 @@ class pricesdrop_bot(threading.Thread):
                             shortlink = self.product_url # Fallback to full URL if shortlink generation fails
                     
                         message = f"{self.product_name} ({self.asin})"
-                        message += f"\n📉 Il prezzo è crollato: {main_current_price:.2f} EUR!"
+                        message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
                         if delivery_cost is not None:
                             message += f"\n🚚 Consegna: {delivery_cost:.2f} EUR"
                         message += f"\nLink: {shortlink}"
                         send_telegram_notification(message, image_url=product_image_url, log_id=log_id)
 
                         if self.autoaddtocart and not self.autocheckout:
-                            main_add_to_cart_button = main_offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
-                            main_add_to_cart_button.click()
+                            add_to_cart_button = offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                            add_to_cart_button.click()
                             log(f"!!! Just added to cart !!!", log_id)
                         elif self.autoaddtocart and self.autocheckout:
                             #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
@@ -1033,112 +1032,10 @@ class pricesdrop_bot(threading.Thread):
                     if price_changed:
                         log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", log_id)
                 
-                # Update previous_main_price after all processing for the current iteration
-                self.previous_main_price = main_current_price
+                # Update previous_price after all processing for the current iteration
+                self.previous_price = current_price
 
                 if self.stop_event.is_set(): # If main offer was processed and bought, exit
-                    break
-
-                offer_containers = driver.find_elements(by=By.XPATH, value="//div[contains(@class, 'aod-information-block') and @role='listitem' and .//input[@name='submit.addToCart']]")
-                current_offer_count = len(offer_containers)
-                if current_offer_count != len(self.previous_offer_prices):
-                    log(f"{current_offer_count} other offers found", log_id)
-
-                if not offer_containers:
-                    driver.refresh()
-                    sleep(2 + random.uniform(0, 3))
-                    continue
-
-                new_offer_prices = []
-                for i, offer in enumerate(offer_containers):
-                    try:
-                        price_changed = False # Default to false
-                        
-                        condition_text = "N/A"
-                        try:
-                            condition_span = offer.find_element(by=By.XPATH, value=".//div[@id='aod-offer-heading']/span")
-                            condition_text = condition_span.text.strip()
-                        except NoSuchElementException:
-                            log(f"Could not find condition for an offer, skipping.", log_id)
-                            continue
-
-                        normalized_state = "unknown"
-                        condition_cleaned = " ".join(condition_text.split()).lower()
-                        
-                        condition_mappings = {
-                            "new": ["nuovo", "new"],
-                            "used-likenew": ["usato - come nuovo", "used - like new"],
-                            "used-very good": ["usato - ottime condizioni", "used - very good"],
-                            "used-good": ["usato - buone condizioni", "used - good"],
-                            "used-acceptable": ["usato - condizioni accettabili", "used - acceptable"],
-                            "used": ["usato", "used"]
-                        }
-
-                        for state, keywords in condition_mappings.items():
-                            for keyword in keywords:
-                                if keyword in condition_cleaned:
-                                    normalized_state = state
-                                    break
-                            if normalized_state != "unknown":
-                                break
-
-                        price_whole_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-whole')]").text.replace('.', '').replace(',', '')
-                        try:
-                            price_fraction_str = offer.find_element(by=By.XPATH, value=".//span[contains(@class, 'a-price-fraction')]").text
-                            current_price = float(f"{price_whole_str}.{price_fraction_str}")
-                        except NoSuchElementException:
-                            current_price = float(price_whole_str)
-                        
-                        new_offer_prices.append(current_price)
-
-                        if i >= len(self.previous_offer_prices) or self.previous_offer_prices[i] != current_price:
-                            price_changed = True
-
-                        log_message = f"Found offer: State='{condition_text}' (normalized='{normalized_state}'), Price={current_price:.2f}"
-
-                        if current_price < 0:
-                            if price_changed:
-                                log(f"{log_message} - ERROR: unable to get {i}th offer's current price...", log_id)
-                            continue
-                            
-                        if self.object_state and normalized_state not in self.object_state:
-                            if price_changed:
-                                log(f"{log_message} - SKIPPING: State not in desired list {self.object_state}", log_id)
-                            continue
-
-                        if current_price <= self.cut_price:
-                            if price_changed:
-                                log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
-
-                                shortlink = generate_shortlink(driver, self.asin, log_id)
-                                if not shortlink:
-                                    shortlink = self.product_url # Fallback to full URL if shortlink generation fails
-                                message = f"{self.product_name} ({self.asin})"
-                                message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
-                                #if delivery_cost is not None:
-                                #    message += f"\n🚚 Consegna: {delivery_cost:.2f} EUR"
-                                message += f"\nLink: {shortlink}"
-                                send_telegram_notification(message, image_url=product_image_url, log_id=log_id)
-                            
-                                if self.autoaddtocart and not self.autocheckout:
-                                    add_to_cart_button = offer.find_element(by=By.XPATH, value=".//input[@name='submit.addToCart']")
-                                    add_to_cart_button.click()
-                                    log(f"!!! Just added to cart !!!", log_id)
-                                elif self.autoaddtocart and self.autocheckout:
-                                    sleep(0.5)
-                                    #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                                    log(f"!!! Just bought !!!", log_id)
-                            
-                            break
-                        else:
-                            if price_changed:
-                                log(f"{log_message} - SKIPPING: The current price is not low enough (i.e. > {self.cut_price:.2f})", log_id)
-                    except Exception as e:
-                        save_debug_html(driver, e, "other_offer", self.asin, log_id)
-
-                self.previous_offer_prices = new_offer_prices
-                
-                if self.stop_event.is_set(): # If one of the other offers was processed and bought, exit
                     break
 
             except Exception as e:
