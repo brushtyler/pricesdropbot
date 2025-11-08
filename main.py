@@ -916,7 +916,7 @@ def generate_shortlink(driver, asin, log_id):
     return shortlink
 
 def get_product_url(asin, amazon_tag):
-    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&aod=0&tag={amazon_tag}"
+    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&aod=0&tag={amazon_tag}"
 
 
 class pricesdrop_bot(threading.Thread):
