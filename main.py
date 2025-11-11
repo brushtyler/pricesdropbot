@@ -259,6 +259,9 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_image_url = scraped_data["product_image_url"]
         price = scraped_data["current_price"]
         items_count = scraped_data["items_count"]
+        sold_by = scraped_data["sold_by"]
+        ships_from = scraped_data["ships_from"]
+        product_url_affiliate = get_product_url(asin, amazon_tag)
         product_brand_ai = scraped_data["product_brand_ai"]
         product_name_ai = scraped_data["product_name_ai"]
         product_description_ai = scraped_data["product_description_ai"]
@@ -286,8 +289,11 @@ DOM>
         Full Title: {product_name}
         Items Count: {items_count}
         Price: {price:.2f} EUR
+        Sold By: {sold_by}
+        Ships From: {ships_from}
         Image URL: {product_image_url}
         Full Link: {product_url}
+        Affiliate Link: {product_url_affiliate}
         """
 
         await update.message.reply_text(message)
@@ -720,6 +726,8 @@ def scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=False):
         "product_image_url": None,
         "current_price": -1.0,
         "delivery_cost": None,
+        "sold_by": "N/A",
+        "ships_from": "N/A",
         "condition_text": "N/A",
         "normalized_state": "unknown",
         "is_unavailable": False,
@@ -731,6 +739,35 @@ def scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=False):
         scraped_data["product_name"] = driver.find_element(by=By.ID, value="productTitle").text.strip()
     except Exception as e:
         log(f"Could not find product name: {e}", log_id)
+
+    # Get Sold by and Shipped by
+    try:
+        merchant_info_element = driver.find_element(by=By.ID, value="merchant-info")
+        merchant_info_text = merchant_info_element.text
+
+        sold_by_match = re.search(r"(?:Venduto da|Venditore|Sold by|Seller)\s*([^.|\n]+)", merchant_info_text)
+        if sold_by_match:
+            scraped_data["sold_by"] = sold_by_match.group(1).strip()
+
+        ships_from_match = re.search(r"(?:Spedito da|Spedizione|Ships from|Shipped by)\s*([^.|\n]+)", merchant_info_text)
+        if ships_from_match:
+            scraped_data["ships_from"] = ships_from_match.group(1).strip()
+
+    except NoSuchElementException:
+        # Fallback to other XPaths if merchant-info is not found
+        try:
+            sold_by_element = driver.find_element(by=By.XPATH, value="//div[@tabular-attribute-name='Venduto da']//span")
+            scraped_data["sold_by"] = sold_by_element.text.strip()
+        except NoSuchElementException:
+            pass # Sold by not found with this XPath
+
+        try:
+            ships_from_element = driver.find_element(by=By.XPATH, value="//div[@tabular-attribute-name='Spedito da']//span")
+            scraped_data["ships_from"] = ships_from_element.text.strip()
+        except NoSuchElementException:
+            pass # Shipped by not found with this XPath
+    except Exception as e:
+        log(f"Could not find Sold by/Shipped by information: {e}", log_id)
 
     # Retrieve items count
     try:
