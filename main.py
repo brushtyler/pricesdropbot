@@ -840,11 +840,7 @@ def scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=False):
                 "//div[@id='qualifiedBuybox']",
                 "//div[@id='newAccordionRow_0']",
                 "//div[@id='newAccordionRow_1']",
-                "//div[@data-a-accordion-row-name='newAccordionRow']",
-                "//div[contains(@class, 'aod-pinned-offer')]",
-                "//div[@id='aod-sticky-pinned-offer']",
-                "//div[contains(@class, 'aod-offer-group') and .//input[@name='submit.addToCart']]",
-                "//div[@id='desktop_qualifiedBuyBox']"
+                "//div[@data-a-accordion-row-name='newAccordionRow']"
             ]
             offer_container, _ = find_element_by_multiple_xpaths(driver, MAIN_OFFER_CONTAINER_XPATHS, "main offer container")
             scraped_data["offer_container"] = offer_container
