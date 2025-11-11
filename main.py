@@ -174,8 +174,8 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = get_product_url(asin, amazon_tag)
-        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=True)
+        product_url = get_product_url(asin)
+        scraped_data = scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=True)
 
         product_name = scraped_data["product_name"]
         if not product_name:
@@ -193,7 +193,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, log_id)
         if not shortlink:
-            shortlink = product_url # Fallback to full URL if shortlink generation fails
+            shortlink = get_product_url(asin, amazon_tag) # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         items_count_str = ""
@@ -248,8 +248,8 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = get_product_url(asin, amazon_tag)
-        scraped_data = scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=True)
+        product_url = get_product_url(asin)
+        scraped_data = scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=True)
 
         product_name = scraped_data["product_name"]
         if not product_name:
@@ -336,7 +336,7 @@ async def offers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 driver.add_cookie(cookie)
 
         # First, navigate to the standard product page
-        product_url = get_product_url(asin, amazon_tag)
+        product_url = get_product_url(asin)
         driver.get(product_url)
         WebDriverWait(driver, 30).until(
             lambda d: d.execute_script("return document.readyState == 'complete'")
@@ -707,7 +707,7 @@ def get_all_offers(driver, asin, log_id):
 
     return offers
 
-def scrape_product_data(driver, product_url, log_id, asin, amazon_tag, use_rufus_ai=False):
+def scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=False):
     driver.get(product_url)
     WebDriverWait(driver, 30).until(
         lambda driver: driver.execute_script("return document.readyState == 'complete'")
@@ -916,8 +916,8 @@ def generate_shortlink(driver, asin, log_id):
         log(f"Failed to generate shortlink for {asin}: {e}", log_id)
     return shortlink
 
-def get_product_url(asin, amazon_tag):
-    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&aod=0&tag={amazon_tag}"
+def get_product_url(asin, amazon_tag=None):
+    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&aod=0{f'&tag={amazon_tag}' if amazon_tag else ''}"
 
 
 class pricesdrop_bot(threading.Thread):
@@ -934,7 +934,7 @@ class pricesdrop_bot(threading.Thread):
         self.previous_price = 0.0
         self.previous_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = get_product_url(self.asin, self.amazon_tag)
+        self.product_url = get_product_url(self.asin)
         self.last_price = None
         self.last_check_time = None
         self.price_history = []
@@ -988,7 +988,7 @@ class pricesdrop_bot(threading.Thread):
             if self.stop_event.is_set():
                 break
             try:
-                scraped_data = scrape_product_data(driver, self.product_url, log_id, self.asin, self.amazon_tag)
+                scraped_data = scrape_product_data(driver, self.product_url, log_id, self.asin)
                 if self.stop_event.is_set():
                     break
 
@@ -1075,7 +1075,7 @@ class pricesdrop_bot(threading.Thread):
 
                         shortlink = generate_shortlink(driver, self.asin, log_id)
                         if not shortlink:
-                            shortlink = self.product_url # Fallback to full URL if shortlink generation fails
+                            shortlink = self.get_product_url(self.asin, self.amazon_tag) # Fallback to full URL if shortlink generation fails
                     
                         message = f"{self.product_name} ({self.asin})"
                         message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
