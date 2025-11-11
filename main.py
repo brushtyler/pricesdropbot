@@ -193,7 +193,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, log_id)
         if not shortlink:
-            shortlink = get_product_url(asin, amazon_tag) # Fallback to full URL if shortlink generation fails
+            shortlink = get_affiliate_link(asin, amazon_tag) # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         items_count_str = ""
@@ -261,7 +261,7 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items_count = scraped_data["items_count"]
         sold_by = scraped_data["sold_by"]
         ships_from = scraped_data["ships_from"]
-        product_url_affiliate = get_product_url(asin, amazon_tag)
+        affiliate_link = get_affiliate_link(asin, amazon_tag)
         product_brand_ai = scraped_data["product_brand_ai"]
         product_name_ai = scraped_data["product_name_ai"]
         product_description_ai = scraped_data["product_description_ai"]
@@ -293,7 +293,7 @@ DOM>
         Ships From: {ships_from}
         Image URL: {product_image_url}
         Full Link: {product_url}
-        Affiliate Link: {product_url_affiliate}
+        Affiliate Link: {affiliate_link}
         """
 
         await update.message.reply_text(message)
@@ -956,8 +956,11 @@ def generate_shortlink(driver, asin, log_id):
         log(f"Failed to generate shortlink for {asin}: {e}", log_id)
     return shortlink
 
-def get_product_url(asin, amazon_tag=None):
-    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&aod=0{f'&tag={amazon_tag}' if amazon_tag else ''}"
+def get_product_url(asin):
+    return f"https://{amazon_host}/dp/{asin}/?smid=A11IL2PNWYJU7H&aod=0"
+
+def get_affiliate_link(asin, amazon_tag):
+    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&tag={amazon_tag}"
 
 
 class pricesdrop_bot(threading.Thread):
@@ -1116,7 +1119,7 @@ class pricesdrop_bot(threading.Thread):
 
                         shortlink = generate_shortlink(driver, self.asin, log_id)
                         if not shortlink:
-                            shortlink = self.get_product_url(self.asin, self.amazon_tag) # Fallback to full URL if shortlink generation fails
+                            shortlink = self.get_affiliate_link(self.asin, self.amazon_tag) # Fallback to full URL if shortlink generation fails
                     
                         message = f"{self.product_name} ({self.asin})"
                         message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
