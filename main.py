@@ -1028,6 +1028,51 @@ class pricesdrop_bot(threading.Thread):
                     if price_changed:
                         log(f"{log_message} - ACCEPTED: Price is low enough.", log_id)
 
+                        if self.autoaddtocart and not self.autocheckout:
+                            try:
+                                add_to_cart_button = offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                                add_to_cart_button.click()
+                                log(f"!!! Just added to cart !!!", log_id)
+                            except NoSuchElementException:
+                                log(f"Could not find 'Add to Cart' button.", log_id)
+                        elif self.autocheckout:
+                            try:
+                                add_to_cart_button = offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
+                                add_to_cart_button.click()
+                                log(f"Added to cart, proceeding to checkout...", log_id)
+
+                                # Go to cart page
+                                driver.get(f"https://{self.amazon_host}/gp/cart/view.html")
+
+                                # Wait for the checkout button to be clickable and then click it
+                                checkout_button = WebDriverWait(driver, 10).until(
+                                    EC.element_to_be_clickable((By.XPATH, '//*[@id="sc-buy-box-ptc-button"]/span/input'))
+                                )
+                                checkout_button.click()
+                                log(f"Clicked 'Proceed to Checkout' button.", log_id)
+
+                                # Wait for the next page to load and click the next button (a-autoid-0-announce)
+                                # This element ID is generic and might change, so it's a potential point of failure.
+                                next_button_1 = WebDriverWait(driver, 10).until(
+                                    EC.element_to_be_clickable((By.XPATH, '//*[@id="a-autoid-0-announce"]'))
+                                )
+                                next_button_1.click()
+                                log(f"Clicked generic next button (a-autoid-0-announce).", log_id)
+
+                                # Wait for the final order submission button
+                                place_order_button = WebDriverWait(driver, 10).until(
+                                    EC.element_to_be_clickable((By.XPATH, '//*[@id="submitOrderButtonId"]/span/input'))
+                                )
+                                place_order_button.click()
+                                log(f"!!! Successfully placed order !!!", log_id)
+                                # After placing the order, the monitoring for this product should stop.
+                                self.stop_event.set()
+
+                            except NoSuchElementException as e:
+                                log(f"Autocheckout failed: Could not find a required element. Error: {e}", log_id)
+                            except Exception as e:
+                                log(f"An unexpected error occurred during autocheckout: {e}", log_id)
+
                         shortlink = generate_shortlink(driver, self.asin, log_id)
                         if not shortlink:
                             shortlink = self.product_url # Fallback to full URL if shortlink generation fails
@@ -1038,17 +1083,6 @@ class pricesdrop_bot(threading.Thread):
                             message += f"\n🚚 Consegna: {delivery_cost:.2f} EUR"
                         message += f"\nLink: {shortlink}"
                         send_telegram_notification(message, image_url=product_image_url, log_id=log_id)
-
-                        if self.autoaddtocart and not self.autocheckout:
-                            add_to_cart_button = offer_container.find_element(by=By.XPATH, value=".//input[@id='add-to-cart-button']")
-                            add_to_cart_button.click()
-                            log(f"!!! Just added to cart !!!", log_id)
-                        elif self.autoaddtocart and self.autocheckout:
-                            #driver.find_element(by=By.XPATH, value='//*[@id="sc-buy-box-ptc-button"]/span/input').click()
-                            sleep(0.5)
-                            #driver.find_element(by=By.XPATH, value='//*[@id="a-autoid-0-announce"]').click()
-                            #driver.find_element(by=By.XPATH, value='//*[@id="submitOrderButtonId"]/span/input').click()
-                            log(f"!!! Just bought !!!", log_id)
                     
                 else:
                     if price_changed:
@@ -1189,7 +1223,7 @@ def amazon_monitor_main(monitoring_started_event):
         os.makedirs("data")
 
     for item in products:
-        log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else 'add it to cart')} if price drops under {item['cut_price']:.2f}...")
+        log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else ('add it to cart' if item.get('autoaddtocart') else 'notify it'))} if price drops under {item['cut_price']:.2f}...")
         start_monitoring_product(item)
 
     # Signal that monitoring has started
