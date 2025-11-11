@@ -446,7 +446,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cut_price = thread_info['thread'].cut_price
         autocheckout = thread_info['thread'].autocheckout
         autoaddtocart = thread_info['thread'].autoaddtocart
-        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout})\n"
+        interval = thread_info['thread'].interval
+        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout}, Interval: {interval}s)\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -826,7 +827,13 @@ def scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=False):
 
     # Check for product unavailability
     try:
-        unavailable_element = driver.find_element(by=By.XPATH, value="//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')] | //div[@id='availability']//span[contains(text(), 'Currently unavailable')] | //div[@id='availability']//span[contains(text(), 'Non disponibile')] ")
+        UNAVAILABLE_XPATHS = [
+            "//div[@id='availability']//span[contains(text(), 'Attualmente non disponibile')]",
+            "//div[@id='availability']//span[contains(text(), 'Currently unavailable')]",
+            "//div[@id='availability']//span[contains(text(), 'Non disponibile')]",
+            "//div[@id='outOfStock']",
+        ]
+        unavailable_element, _ = find_element_by_multiple_xpaths(driver, UNAVAILABLE_XPATHS, "unavailable element")
         if unavailable_element:
             scraped_data["is_unavailable"] = True
             scraped_data["current_price"] = -1.0
@@ -962,6 +969,7 @@ class pricesdrop_bot(threading.Thread):
         self.cut_price=product["cut_price"]
         self.autoaddtocart=product.get("autoaddtocart", False)
         self.autocheckout=product.get("autocheckout", False)
+        self.interval=product.get("interval", 5)
         object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
         self.previous_price = 0.0
@@ -1017,7 +1025,7 @@ class pricesdrop_bot(threading.Thread):
         log_id = self.product_name
 
         while True:
-            sleep(5 + random.uniform(0, 3))
+            sleep(self.interval + random.uniform(0, 3))
             if self.stop_event.is_set():
                 break
             try:
