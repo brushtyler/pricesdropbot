@@ -9,7 +9,7 @@ import selenium
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from time import sleep
+import time
 import threading
 import os
 import pickle
@@ -319,7 +319,7 @@ DOM>
         await update.message.reply_text(message)
 
         if debug:
-            sleep(60)
+            time.sleep(60)
 
     finally:
         if driver:
@@ -361,7 +361,7 @@ async def offers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Add a small delay to mimic human behavior
-        sleep(2 + random.uniform(0, 3))
+        time.sleep(2 + random.uniform(0, 3))
 
         # Now, get all offers from the AOD page
         offers = get_all_offers(driver, asin, log_id)
@@ -629,7 +629,7 @@ def get_product_info_from_rufus(driver, log_id, asin):
                 EC.visibility_of_element_located((By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]'))
             )
             # Wait for the text to be fully populated
-            sleep(5)
+            time.sleep(5)
             # Retrieve the answer by re-finding the element
             answer_text = driver.find_element(By.XPATH, '(//div[@class="rufus-sections-container" and @data-section-class="TextSubsections"])[last()]//div[@role="region"]').get_attribute("aria-label")
             #log(f"RufusAI reply (attempts #{attempts})> {answer_text}", log_id)
@@ -938,11 +938,11 @@ def handle_captcha(driver, log_id):
             log(f"CAPTCHA detected! Attempting to bypass by clicking 'Continue shopping' button.", log_id)
             random_delay = random.uniform(0, 3)
             log(f"Waiting for {random_delay:.2f} seconds before clicking 'Continue shopping' button.", log_id)
-            sleep(random_delay)
+            time.sleep(random_delay)
             continue_button = driver.find_element(by=By.XPATH, value="//button[contains(text(), 'Continua con gli acquisti')] | //button[contains(text(), 'Continue shopping')] | //button[contains(text(), 'Continue with your order')] ")
             continue_button.click()
             log(f"'Continue shopping' button clicked. Waiting for 3 seconds.", log_id)
-            sleep(3 + random.uniform(0, 3))
+            time.sleep(3 + random.uniform(0, 3))
             return True # CAPTCHA was handled
     except NoSuchElementException:
         pass # No CAPTCHA
@@ -1044,10 +1044,22 @@ class pricesdrop_bot(threading.Thread):
 
         log(f"Monitoring product '{self.product_name}' ({self.asin}) started", log_id)
 
+        first_run = True
         while True:
-            sleep(self.interval + random.uniform(0, 3))
+            if not first_run:
+                # Calculate sleep time
+                elapsed_time = time.time() - start_time
+                sleep_time = self.interval - elapsed_time
+                if sleep_time > 0:
+                    time.sleep(sleep_time + random.uniform(0, 3))
+            else:
+                first_run = False
+
             if self.stop_event.is_set():
                 break
+
+            start_time = time.time()
+
             try:
                 scraped_data = scrape_product_data(driver, self.product_url, log_id, self.asin)
                 if self.stop_event.is_set():
@@ -1167,7 +1179,7 @@ class pricesdrop_bot(threading.Thread):
                 line_number = exc_tb.tb_lineno
                 log(f"Error finding offers: {e} at file {file_name} line {line_number}", log_id)
                 driver.refresh()
-                sleep(2 + random.uniform(0, 3))
+                time.sleep(2 + random.uniform(0, 3))
             
         driver.quit()
 
@@ -1247,7 +1259,7 @@ def amazon_monitor_main(monitoring_started_event):
                 check_driver.add_cookie(cookie)
         
         check_driver.get(f"https://{amazon_host}/gp/css/homepage.html")
-        sleep(2) # Give time for redirection
+        time.sleep(2) # Give time for redirection
         
         if "signin" in check_driver.current_url:
             log("Session from cookies is invalid. Deleting cookies and performing new login.")
@@ -1261,13 +1273,13 @@ def amazon_monitor_main(monitoring_started_event):
         login_driver = create_chrome_driver(headless=False)
 
         login_driver.get(f"https://{amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2F0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
-        sleep(1)
+        time.sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="ap_email"]').send_keys(amazon_email)
-        sleep(1)
+        time.sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="continue"]').click()
-        sleep(1)
+        time.sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="ap_password"]').send_keys(amazon_psw)
-        sleep(1)
+        time.sleep(1)
         login_driver.find_element(by=By.XPATH, value='//*[@id="signInSubmit"]').click()
 
         input("Please complete the login on the browser. If you have to complete a 2FA, do it. Once you are logged in, press Enter here to continue...") # Wait for user to complete login and 2FA (if any)
