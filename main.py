@@ -996,7 +996,7 @@ class pricesdrop_bot(threading.Thread):
         self.cut_price=product["cut_price"]
         self.autoaddtocart=product.get("autoaddtocart", False)
         self.autocheckout=product.get("autocheckout", False)
-        self.interval=product.get("interval", 5)
+        self.interval=product.get("interval", 60)
         self.seller_id=product.get("seller_id", "amazon")
         object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
