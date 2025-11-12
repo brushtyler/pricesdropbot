@@ -13,7 +13,7 @@ from time import sleep
 import threading
 import os
 import pickle
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchDriverException, NoSuchElementException, TimeoutException
 from datetime import datetime
 import sys
 import toml
@@ -26,6 +26,33 @@ from dotenv import load_dotenv
 load_dotenv()
 
 user_agent_string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+
+def create_chrome_driver(headless=True):
+    options = selenium.webdriver.ChromeOptions()
+    options.add_argument(f"user-agent={user_agent_string}")
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox");
+    options.add_argument("--disable-dev-shm-usage");
+    options.add_argument("--disable-renderer-backgrounding");
+    options.add_argument("--disable-background-timer-throttling");
+    options.add_argument("--disable-backgrounding-occluded-windows");
+    options.add_argument("--disable-client-side-phishing-detection");
+    options.add_argument("--disable-crash-reporter");
+    options.add_argument("--disable-oopr-debug-crash-dump");
+    options.add_argument("--no-crash-upload");
+    options.add_argument("--disable-gpu");
+    options.add_argument("--disable-extensions");
+    options.add_argument("--disable-low-res-tiling");
+    options.add_argument("--log-level=3");
+    options.add_argument("--silent");
+    options.add_argument("--window-size=1920,1080")
+    try:
+        return selenium.webdriver.Chrome(options=options)
+    except NoSuchDriverException:
+        pass
+    service = selenium.webdriver.chrome.service.Service(executable_path='/usr/bin/chromedriver')
+    return selenium.webdriver.Chrome(service=service, options=options)
 
 def log(message, product_name=None):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}]{f' [{product_name}]' if product_name else ''} {message}")
@@ -151,14 +178,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     driver = None
     try:
         # Start a new driver session
-        options = selenium.webdriver.ChromeOptions()
-        options.add_argument(f"user-agent={user_agent_string}")
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-gpu")
-        driver = selenium.webdriver.Chrome(options=options)
+        driver = create_chrome_driver(headless=True)
 
         # Load cookies to be logged in
         if not os.path.exists(".cookies.pkl"):
@@ -225,15 +245,7 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     driver = None
     try:
         # Start a new driver session
-        options = selenium.webdriver.ChromeOptions()
-        options.add_argument(f"user-agent={user_agent_string}")
-        if not debug:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-gpu")
-        driver = selenium.webdriver.Chrome(options=options)
+        driver = create_chrome_driver(headless=not debug)
 
         # Load cookies to be logged in
         if not os.path.exists(".cookies.pkl"):
@@ -320,15 +332,7 @@ async def offers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     driver = None
     try:
         # Start a new driver session
-        options = selenium.webdriver.ChromeOptions()
-        options.add_argument(f"user-agent={user_agent_string}")
-        if not debug:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-gpu")
-        driver = selenium.webdriver.Chrome(options=options)
+        driver = create_chrome_driver(headless=not debug)
 
         # Load cookies to be logged in
         if not os.path.exists(".cookies.pkl"):
@@ -1018,15 +1022,7 @@ class pricesdrop_bot(threading.Thread):
             json.dump(serializable_history, f, indent=4) 
 
     def run(self):
-        options = selenium.webdriver.ChromeOptions()
-        options.add_argument(f"user-agent={user_agent_string}")
-        options.add_argument("--headless=new") # Always headless for monitoring
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-gpu")
-
-        driver = selenium.webdriver.Chrome(options=options) 
+        driver = create_chrome_driver(headless=True) # Always headless for monitoring 
 
         # Always load cookies, as login is handled externally
         driver.get(f"https://{self.amazon_host}/")
@@ -1235,14 +1231,7 @@ def stop_monitoring_product(asin):
 def amazon_monitor_main(monitoring_started_event):
     if os.path.exists(".cookies.pkl"):
         log("Cookies file found. Checking session validity...")
-        check_options = selenium.webdriver.ChromeOptions()
-        check_options.add_argument(f"user-agent={user_agent_string}")
-        check_options.add_argument("--no-sandbox")
-        check_options.add_argument("--disable-dev-shm-usage")
-        check_options.add_argument("--window-size=1920,1080")
-        check_options.add_argument("--disable-gpu")
-        check_options.add_argument("--headless=new")
-        check_driver = selenium.webdriver.Chrome(options=check_options)
+        check_driver = create_chrome_driver(headless=True)
         check_driver.get(f"https://{amazon_host}/")
         with open(".cookies.pkl", "rb") as f:
             cookies = pickle.load(f)
@@ -1263,13 +1252,7 @@ def amazon_monitor_main(monitoring_started_event):
 
     if not os.path.exists(".cookies.pkl"):
         log("No cookies found. Performing login in non-headless mode...")
-        login_options = selenium.webdriver.ChromeOptions()
-        login_options.add_argument(f"user-agent={user_agent_string}")
-        login_options.add_argument("--no-sandbox")
-        login_options.add_argument("--disable-dev-shm-usage")
-        login_options.add_argument("--window-size=1920,1080")
-        login_options.add_argument("--disable-gpu")
-        login_driver = selenium.webdriver.Chrome(options=login_options)
+        login_driver = create_chrome_driver(headless=False)
 
         login_driver.get(f"https://{amazon_host}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{amazon_host}%2Fgp%2Fcart%2Fview.html%2Fref%3Dnav_ya_signin%3F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=itflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2F0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
         sleep(1)
