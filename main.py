@@ -1019,9 +1019,11 @@ class pricesdrop_bot(threading.Thread):
                     if self.price_history:
                         self.last_price = self.price_history[-1][0]
                         self.last_check_time = self.price_history[-1][1]
+                        self.previous_price = self.last_price # Initialize previous_price with the last known price
+                        log(f"Initialized previous price for {self.product_name} to {self.previous_price:.2f} from history.", self.product_name)
             except Exception as e:
                 log(f"Error loading price history for {self.asin}: {e}", self.product_name)
-        threading.Thread.__init__(self) 
+        threading.Thread.__init__(self)
 
     def _save_price_history(self):
         # Convert datetime objects to ISO format strings for JSON serialization
