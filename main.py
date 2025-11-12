@@ -13,7 +13,7 @@ from time import sleep
 import threading
 import os
 import pickle
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from datetime import datetime
 import sys
 import toml
@@ -941,9 +941,9 @@ def handle_captcha(driver, log_id):
 def generate_shortlink(driver, asin, log_id):
     shortlink = ""
     try:
-        get_link_button = driver.find_element(by=By.ID, value="amzn-ss-get-link-button")
+        get_link_button = driver.find_element(by=By.CSS_SELECTOR, value="button[data-csa-c-content-id='sitestripe-get-linkbutton']")
         get_link_button.click()
-        log(f"Clicked 'amzn-ss-get-link-button' for {asin}", log_id)
+        log(f"Clicked 'sitestripe-get-linkbutton' for {asin}", log_id)
 
         # Wait for the textarea to be populated
         wait = WebDriverWait(driver, 10)
@@ -1040,6 +1040,8 @@ class pricesdrop_bot(threading.Thread):
 
         log_id = self.product_name
 
+        log(f"Monitoring product '{self.product_name}' ({self.asin}) started", log_id)
+
         while True:
             sleep(self.interval + random.uniform(0, 3))
             if self.stop_event.is_set():
@@ -1108,20 +1110,26 @@ class pricesdrop_bot(threading.Thread):
                                 checkout_button.click()
                                 log(f"Clicked 'Proceed to Checkout' button.", log_id)
 
-                                # Wait for the next page to load and click the next button (a-autoid-0-announce)
-                                # This element ID is generic and might change, so it's a potential point of failure.
-                                next_button_1 = WebDriverWait(driver, 10).until(
-                                    EC.element_to_be_clickable((By.XPATH, '//*[@id="a-autoid-0-announce"]'))
-                                )
-                                next_button_1.click()
-                                log(f"Clicked generic next button (a-autoid-0-announce).", log_id)
+                                # Wait for either the next button or the final order button to be clickable
+                                wait = WebDriverWait(driver, 10)
+                                element = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="a-autoid-0-announce"] | //*[@id="submitOrderButtonId"]/span/input')))
 
-                                # Wait for the final order submission button
-                                place_order_button = WebDriverWait(driver, 10).until(
-                                    EC.element_to_be_clickable((By.XPATH, '//*[@id="submitOrderButtonId"]/span/input'))
-                                )
-                                place_order_button.click()
-                                log(f"!!! Successfully placed order !!!", log_id)
+                                # Check which element was found and click it
+                                if element.tag_name == 'input':
+                                    # This is the final order button
+                                    element.click()
+                                    log(f"!!! Successfully placed order !!!", log_id)
+                                else:
+                                    # This is the generic next button
+                                    element.click()
+                                    log(f"Clicked generic next button (a-autoid-0-announce).", log_id)
+                                    # Now wait for the final button
+                                    place_order_button = WebDriverWait(driver, 10).until(
+                                        EC.element_to_be_clickable((By.XPATH, '//*[@id="submitOrderButtonId"]/span/input'))
+                                    )
+                                    place_order_button.click()
+                                    log(f"!!! Successfully placed order !!!", log_id)
+
                                 # After placing the order, the monitoring for this product should stop.
                                 self.stop_event.set()
 
@@ -1202,6 +1210,7 @@ def start_monitoring_product(product_data):
         log(f"Product {asin} is already being monitored.")
         return
 
+    log(f"Starting monitoring product '{product_data['name']}' ({asin}): {('buy it' if product_data.get('autocheckout') else ('add it to cart' if product_data.get('autoaddtocart') else 'notify it'))} if price drops under {product_data['cut_price']:.2f}...")
     stop_event = threading.Event()
     t = pricesdrop_bot(
         amazon_host=amazon_host, 
@@ -1211,7 +1220,6 @@ def start_monitoring_product(product_data):
     )
     t.start()
     active_threads[asin] = {'thread': t, 'stop_event': stop_event, 'product_data': product_data}
-    log(f"Started monitoring product '{product_data['name']}' ({asin}).")
 
 def stop_monitoring_product(asin):
     if asin not in active_threads:
@@ -1292,7 +1300,6 @@ def amazon_monitor_main(monitoring_started_event):
         os.makedirs("data")
 
     for item in products:
-        log(f"Start looking for price drop on product '{item['name']}': {('buy it' if item.get('autocheckout') else ('add it to cart' if item.get('autoaddtocart') else 'notify it'))} if price drops under {item['cut_price']:.2f}...")
         start_monitoring_product(item)
 
     # Signal that monitoring has started
