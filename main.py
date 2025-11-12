@@ -103,7 +103,8 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "asin": context.user_data['asin'],
         "cut_price": context.user_data['cut_price'],
         "autoaddtocart": False,
-        "autocheckout": False
+        "autocheckout": False,
+        "enabled": True
     }
 
     # Update products.toml
@@ -118,7 +119,8 @@ async def add_cut_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "asin": product_data['asin'],
         "cut_price": product_data['cut_price'],
         "autoaddtocart": product_data['autoaddtocart'],
-        "autocheckout": product_data['autocheckout']
+        "autocheckout": product_data['autocheckout'],
+        "enabled": product_data['enabled']
     }
 
     with open(products_file, 'w', encoding='utf-8') as f:
@@ -1202,8 +1204,9 @@ def load_products_from_toml():
 
     products = []
     for name, details in products_toml.items():
-        details['name'] = name
-        products.append(details)
+        if details.get('enabled', True):  # Default to True if not present
+            details['name'] = name
+            products.append(details)
     return products
 
 def load_sellers_from_toml():
