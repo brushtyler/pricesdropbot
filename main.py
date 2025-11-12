@@ -139,12 +139,13 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /post <ASIN> <message>")
+    if len(context.args) < 3:
+        await update.message.reply_text("Usage: /post <ASIN> <seller_id> <message>")
         return
 
     asin = context.args[0]
-    custom_message = " ".join(context.args[1:])
+    seller_id = context.args[1]
+    custom_message = " ".join(context.args[2:])
     log_id = f"/post {asin}"
 
     driver = None
@@ -174,7 +175,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = get_product_url(asin)
+        product_url = get_product_url(asin, seller_id)
         scraped_data = scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=True)
 
         product_name = scraped_data["product_name"]
@@ -193,7 +194,7 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate Shortlink
         shortlink = generate_shortlink(driver, asin, log_id)
         if not shortlink:
-            shortlink = get_affiliate_link(asin, amazon_tag) # Fallback to full URL if shortlink generation fails
+            shortlink = get_affiliate_link(asin, amazon_tag, seller_id) # Fallback to full URL if shortlink generation fails
 
         # Construct and send message
         items_count_str = ""
@@ -211,12 +212,13 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    if not context.args:
-        await update.message.reply_text("Usage: /get <ASIN>")
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /get <ASIN> <seller_id> [options]")
         return
 
     asin = context.args[0]
-    options = context.args[1].split(',') if len(context.args) >= 2 else []
+    seller_id = context.args[1]
+    options = context.args[2].split(',') if len(context.args) >= 3 else []
     debug = "debug" in options
     log_id = f"/get {asin}"
 
@@ -248,7 +250,7 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver.refresh()
 
         # Navigate to product page
-        product_url = get_product_url(asin)
+        product_url = get_product_url(asin, seller_id)
         scraped_data = scrape_product_data(driver, product_url, log_id, asin, use_rufus_ai=True)
 
         product_name = scraped_data["product_name"]
@@ -261,7 +263,7 @@ async def get_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items_count = scraped_data["items_count"]
         sold_by = scraped_data["sold_by"]
         ships_from = scraped_data["ships_from"]
-        affiliate_link = get_affiliate_link(asin, amazon_tag)
+        affiliate_link = get_affiliate_link(asin, amazon_tag, seller_id)
         product_brand_ai = scraped_data["product_brand_ai"]
         product_name_ai = scraped_data["product_name_ai"]
         product_description_ai = scraped_data["product_description_ai"]
@@ -447,7 +449,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         autocheckout = thread_info['thread'].autocheckout
         autoaddtocart = thread_info['thread'].autoaddtocart
         interval = thread_info['thread'].interval
-        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout}, Interval: {interval}s)\n"
+        seller_id = thread_info['thread'].seller_id
+        message += f"- <b>{product_name}</b> (ASIN: {asin}, Cut Price: {cut_price:.2f}, Autoaddtocart: {autoaddtocart}, Autocheckout: {autocheckout}, Interval: {interval}s, Seller ID: {seller_id})\n"
     await update.message.reply_text(message, parse_mode="HTML")
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -468,6 +471,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_price = monitor_thread.last_price
     last_check_time = monitor_thread.last_check_time
     price_history = monitor_thread.price_history
+    seller_id = monitor_thread.seller_id
 
     if not price_history:
         message = f"No price history available for ASIN {asin}."
@@ -481,6 +485,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         max_price_tuple = max(price_history, key=lambda item: item[0])
 
         message = f"<b>Monitoring data for {monitor_thread.product_name} (ASIN: {asin}):</b>\n"
+        message += f"Seller ID: {seller_id}\n"
         message += f"Last Price: {last_price:.2f} EUR on {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"Max Price: {max_price_tuple[0]:.2f} EUR on {max_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"Min Price: {min_price_tuple[0]:.2f} EUR on {min_price_tuple[1].strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -592,7 +597,8 @@ def get_product_info_from_rufus(driver, log_id, asin):
         while reply_sep not in answer_text or answer_text.count(reply_sep) < len(request_mapping) - 1:
             attempts += 1
             if attempts > 3:
-                log(f"Could not get info from RufusAI! All replies follow:\n{'\n> '.join(all_answer_texts)}", log_id)
+                joined_answer_texts = '\n> '.join(all_answer_texts)
+                log(f"Could not get info from RufusAI! All replies follow:\n{joined_answer_texts}", log_id)
                 break;
 
             # Wait for the text area to be visible before write the queries
@@ -956,11 +962,17 @@ def generate_shortlink(driver, asin, log_id):
         log(f"Failed to generate shortlink for {asin}: {e}", log_id)
     return shortlink
 
-def get_product_url(asin):
-    return f"https://{amazon_host}/dp/{asin}/?smid=A11IL2PNWYJU7H&aod=0"
+def get_product_url(asin, seller_id=None):
+    smid = sellers.get(seller_id, {}).get('smid') if seller_id else None
+    if not smid and len(seller_id) in [13, 14] and seller_id.isalnum():
+        smid = seller_id
+    return f"https://{amazon_host}/dp/{asin}/?aod=0{f'&smid={smid}' if smid else ''}"
 
-def get_affiliate_link(asin, amazon_tag):
-    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}&smid=A11IL2PNWYJU7H&tag={amazon_tag}"
+def get_affiliate_link(asin, amazon_tag, seller_id=None):
+    smid = sellers.get(seller_id, {}).get('smid') if seller_id else None
+    if not smid and len(seller_id) in [13, 14] and seller_id.isalnum():
+        smid = seller_id
+    return f"https://{amazon_host}/dp/{asin}/?offerta_selezionata_da={bot_name}{f'&smid={smid}' if smid else ''}&tag={amazon_tag}"
 
 
 class pricesdrop_bot(threading.Thread):
@@ -973,12 +985,13 @@ class pricesdrop_bot(threading.Thread):
         self.autoaddtocart=product.get("autoaddtocart", False)
         self.autocheckout=product.get("autocheckout", False)
         self.interval=product.get("interval", 5)
+        self.seller_id=product.get("seller_id", "amazon")
         object_state=product.get("object_state")
         self.object_state = [state.lower() for state in object_state] if object_state else []
         self.previous_price = 0.0
         self.previous_offer_xpath = None
         self.stop_event = stop_event
-        self.product_url = get_product_url(self.asin)
+        self.product_url = get_product_url(self.asin, self.seller_id)
         self.last_price = None
         self.last_check_time = None
         self.price_history = []
@@ -1119,7 +1132,7 @@ class pricesdrop_bot(threading.Thread):
 
                         shortlink = generate_shortlink(driver, self.asin, log_id)
                         if not shortlink:
-                            shortlink = self.get_affiliate_link(self.asin, self.amazon_tag) # Fallback to full URL if shortlink generation fails
+                            shortlink = get_affiliate_link(self.asin, self.amazon_tag) # Fallback to full URL if shortlink generation fails
                     
                         message = f"{self.product_name} ({self.asin})"
                         message += f"\n📉 Il prezzo è crollato: {current_price:.2f} EUR!"
@@ -1170,6 +1183,18 @@ def load_products_from_toml():
         details['name'] = name
         products.append(details)
     return products
+
+def load_sellers_from_toml():
+    sellers_file = 'sellers.toml'
+    try:
+        with open(sellers_file, 'r', encoding='utf-8') as f:
+            sellers_toml = toml.load(f)
+    except FileNotFoundError:
+        log(f"'{sellers_file}' not found. Creating a default one.")
+        with open(sellers_file, 'w', encoding='utf-8') as f:
+            toml.dump({'amazon': {'name': 'Amazon', 'smid': 'A11IL2PNWYJU7H'}}, f)
+        return {'amazon': {'name': 'Amazon', 'smid': 'A11IL2PNWYJU7H'}}
+    return sellers_toml
 
 def start_monitoring_product(product_data):
     asin = product_data['asin']
@@ -1289,6 +1314,8 @@ amazon_psw=os.getenv("AMAZON_PASSWORD")
 products = load_products_from_toml()
 if products is None:
     sys.exit()
+
+sellers = load_sellers_from_toml()
 
 active_threads = {}
 
