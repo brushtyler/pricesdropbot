@@ -33,17 +33,23 @@ def create_chrome_driver(headless=True):
     if headless:
         options.add_argument("--headless=new")
     options.add_argument("--no-sandbox");
+    options.add_argument('--disable-notifications')
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--disable-modal-animations")
+    options.add_argument('--blink-settings=imagesEnabled=false')
     options.add_argument("--disable-dev-shm-usage");
     options.add_argument("--disable-renderer-backgrounding");
     options.add_argument("--disable-background-timer-throttling");
     options.add_argument("--disable-backgrounding-occluded-windows");
     options.add_argument("--disable-client-side-phishing-detection");
     options.add_argument("--disable-crash-reporter");
+    #options.add_argument("--disable-crashpad-for-testing")
     options.add_argument("--disable-oopr-debug-crash-dump");
     options.add_argument("--no-crash-upload");
     options.add_argument("--disable-gpu");
     options.add_argument("--disable-extensions");
     options.add_argument("--disable-low-res-tiling");
+    options.add_argument("--disable-logging")
     options.add_argument("--log-level=3");
     options.add_argument("--silent");
     options.add_argument("--window-size=1920,1080")
